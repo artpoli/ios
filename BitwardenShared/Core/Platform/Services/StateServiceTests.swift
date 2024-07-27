@@ -253,6 +253,46 @@ class StateServiceTests: BitwardenTestCase { // swiftlint:disable:this type_body
         }
     }
 
+    /// `getAccountHasBeenUnlockedInteractively()` gets the default value from the active user.
+    func test_getAccountHasBeenUnlockedInteractively_default() async throws {
+        appSettingsStore.state = State.fixture(
+            accounts: [
+                "1": Account.fixture(),
+            ],
+            activeUserId: "1"
+        )
+        let result = try await subject.getAccountHasBeenUnlockedInteractively()
+        XCTAssertFalse(result)
+    }
+
+    /// `getAccountHasBeenUnlockedInteractively()` gets the value from the active user.
+    func test_getAccountHasBeenUnlockedInteractively() async throws {
+        appSettingsStore.state = State.fixture(
+            accounts: [
+                "1": Account.fixture(),
+            ],
+            activeUserId: "1"
+        )
+        try await subject.setAccountHasBeenUnlockedInteractively(value: true)
+        let result = try await subject.getAccountHasBeenUnlockedInteractively()
+        XCTAssertTrue(result)
+    }
+
+    /// `getAccountHasBeenUnlockedInteractively(userId:)` gets the value from the given user.
+    func test_getAccountHasBeenUnlockedInteractively_givenUser() async throws {
+        try await subject.setAccountHasBeenUnlockedInteractively(userId: "2", value: true)
+        let result = try await subject.getAccountHasBeenUnlockedInteractively(userId: "2")
+        XCTAssertTrue(result)
+    }
+
+    /// `getAccountHasBeenUnlockedInteractively()` gets the value from the given user.
+    func test_getAccountHasBeenUnlockedInteractively_throwsGettingTheUser() async throws {
+        appSettingsStore.state?.activeUserId = nil
+        await assertAsyncThrows(error: StateServiceError.noActiveAccount) {
+            _ = try await subject.getAccountHasBeenUnlockedInteractively()
+        }
+    }
+
     /// `getActiveAccount()` returns the active account.
     func test_getActiveAccount() async throws {
         let account = Account.fixture(profile: .fixture(userId: "2"))
@@ -509,6 +549,22 @@ class StateServiceTests: BitwardenTestCase { // swiftlint:disable:this type_body
     func test_getEnvironmentUrls_noUser() async throws {
         let urls = try await subject.getEnvironmentUrls(userId: "-1")
         XCTAssertNil(urls)
+    }
+
+    /// `getEvents()` returns the events for the active account.
+    func test_getEvents() async throws {
+        await subject.addAccount(.fixture(profile: .fixture(userId: "1")))
+
+        let noEvents = try await subject.getEvents(userId: "1")
+        XCTAssertEqual(noEvents, [])
+
+        let events = [
+            EventData(type: .cipherAttachmentCreated, cipherId: "1", date: .now),
+            EventData(type: .userUpdated2fa, cipherId: nil, date: .now),
+        ]
+        appSettingsStore.eventsByUserId["1"] = events
+        let actual = try await subject.getEvents(userId: "1")
+        XCTAssertEqual(actual, events)
     }
 
     /// `getLastActiveTime(userId:)` gets the user's last active time.
@@ -1249,6 +1305,18 @@ class StateServiceTests: BitwardenTestCase { // swiftlint:disable:this type_body
         XCTAssertTrue(appSettingsStore.lastUserShouldConnectToWatch)
     }
 
+    /// `setEvents(_:userId:)` sets the events for a user.
+    func test_setEvents() async throws {
+        await subject.addAccount(.fixture())
+        let events = [
+            EventData(type: .cipherAttachmentCreated, cipherId: "1", date: .now),
+            EventData(type: .userUpdated2fa, cipherId: nil, date: .now),
+        ]
+
+        try await subject.setEvents(events, userId: "1")
+        XCTAssertEqual(appSettingsStore.eventsByUserId["1"], events)
+    }
+
     /// `setLastSyncTime(_:userId:)` sets the last sync time for a user.
     func test_setLastSyncTime() async throws {
         await subject.addAccount(.fixture(profile: .fixture(userId: "1")))
@@ -1282,6 +1350,42 @@ class StateServiceTests: BitwardenTestCase { // swiftlint:disable:this type_body
 
         try await subject.setDisableAutoTotpCopy(false, userId: "1")
         XCTAssertEqual(appSettingsStore.disableAutoTotpCopyByUserId["1"], false)
+    }
+
+    /// `setAccountHasBeenUnlockedInteractively(userId:value:)` updates volatile data
+    func test_setAccountHasBeenUnlockedInteractively() async throws {
+        try await subject.setAccountHasBeenUnlockedInteractively(userId: "1", value: true)
+        let result = await subject.accountVolatileData["1"]?.hasBeenUnlockedInteractively ?? false
+        XCTAssertTrue(result)
+    }
+
+    /// `setAccountHasBeenUnlockedInteractively(userId:value:)` updates volatile data for existing user.
+    func test_setAccountHasBeenUnlockedInteractively_updateExisting() async throws {
+        try await subject.setAccountHasBeenUnlockedInteractively(userId: "1", value: true)
+        try await subject.setAccountHasBeenUnlockedInteractively(userId: "1", value: false)
+        let result = await subject.accountVolatileData["1"]?.hasBeenUnlockedInteractively ?? false
+        XCTAssertFalse(result)
+    }
+
+    /// `setAccountHasBeenUnlockedInteractively(value:)` updates volatile data for current user.
+    func test_setAccountHasBeenUnlockedInteractively_updateByCurrentUser() async throws {
+        appSettingsStore.state = State.fixture(
+            accounts: [
+                "1": Account.fixture(),
+            ],
+            activeUserId: "1"
+        )
+        try await subject.setAccountHasBeenUnlockedInteractively(value: true)
+        let result = await subject.accountVolatileData["1"]?.hasBeenUnlockedInteractively ?? false
+        XCTAssertTrue(result)
+    }
+
+    /// `setAccountHasBeenUnlockedInteractively(value:)` throws if it throws when getting the user id.
+    func test_setAccountHasBeenUnlockedInteractively_throwsWhenGettingUserId() async throws {
+        appSettingsStore.state?.activeUserId = nil
+        await assertAsyncThrows(error: StateServiceError.noActiveAccount) {
+            _ = try await subject.setAccountHasBeenUnlockedInteractively(value: true)
+        }
     }
 
     /// `setActiveAccount(userId: )` succeeds if there is a matching account

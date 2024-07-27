@@ -31,10 +31,14 @@ class MockStateService: StateService { // swiftlint:disable:this type_body_lengt
     var encryptedPinByUserId = [String: String]()
     var environmentUrls = [String: EnvironmentUrlData]()
     var environmentUrlsError: Error?
+    var eventsResult: Result<Void, Error> = .success(())
+    var events = [String: [EventData]]()
     var forcePasswordResetReason = [String: ForcePasswordResetReason]()
     var lastActiveTime = [String: Date]()
     var loginRequest: LoginRequestNotification?
     var getAccountEncryptionKeysError: Error?
+    // swiftlint:disable:next identifier_name
+    var getAccountHasBeenUnlockedInteractivelyResult: Result<Bool, Error> = .success(false)
     var getBiometricAuthenticationEnabledResult: Result<Void, Error> = .success(())
     var getBiometricIntegrityStateError: Error?
     var lastSyncTimeByUserId = [String: Date]()
@@ -42,6 +46,7 @@ class MockStateService: StateService { // swiftlint:disable:this type_body_lengt
     var lastUserShouldConnectToWatch = false
     var masterPasswordHashes = [String: String]()
     var notificationsLastRegistrationDates = [String: Date]()
+    var notificationsLastRegistrationError: Error?
     var passwordGenerationOptions = [String: PasswordGenerationOptions]()
     var pinProtectedUserKeyValue = [String: String]()
     var preAuthEnvironmentUrls: EnvironmentUrlData?
@@ -50,6 +55,9 @@ class MockStateService: StateService { // swiftlint:disable:this type_body_lengt
     var showWebIconsSubject = CurrentValueSubject<Bool, Never>(true)
     var timeoutAction = [String: SessionTimeoutAction]()
     var serverConfig = [String: ServerConfig]()
+    var setAccountHasBeenUnlockedInteractivelyHasBeenCalled = false // swiftlint:disable:this identifier_name
+    // swiftlint:disable:next identifier_name
+    var setAccountHasBeenUnlockedInteractivelyResult: Result<Void, Error> = .success(())
     var setBiometricAuthenticationEnabledResult: Result<Void, Error> = .success(())
     var setBiometricIntegrityStateError: Error?
     var shouldCheckOrganizationUnassignedItems = [String: Bool?]()
@@ -104,6 +112,10 @@ class MockStateService: StateService { // swiftlint:disable:this type_body_lengt
             throw StateServiceError.noActiveAccount
         }
         return encryptionKeys
+    }
+
+    func getAccountHasBeenUnlockedInteractively(userId: String?) async throws -> Bool {
+        try getAccountHasBeenUnlockedInteractivelyResult.get()
     }
 
     func getAccount(userId: String?) async throws -> BitwardenShared.Account {
@@ -186,6 +198,12 @@ class MockStateService: StateService { // swiftlint:disable:this type_body_lengt
         return environmentUrls[userId]
     }
 
+    func getEvents(userId: String?) async throws -> [EventData] {
+        try eventsResult.get()
+        let userId = try unwrapUserId(userId)
+        return events[userId] ?? []
+    }
+
     func getLastActiveTime(userId: String?) async throws -> Date? {
         let userId = try unwrapUserId(userId)
         return lastActiveTime[userId]
@@ -206,6 +224,9 @@ class MockStateService: StateService { // swiftlint:disable:this type_body_lengt
     }
 
     func getNotificationsLastRegistrationDate(userId: String?) async throws -> Date? {
+        if let notificationsLastRegistrationError {
+            throw notificationsLastRegistrationError
+        }
         let userId = try unwrapUserId(userId)
         return notificationsLastRegistrationDates[userId]
     }
@@ -285,6 +306,11 @@ class MockStateService: StateService { // swiftlint:disable:this type_body_lengt
         accountEncryptionKeys[userId] = encryptionKeys
     }
 
+    func setAccountHasBeenUnlockedInteractively(userId: String?, value: Bool) async throws {
+        setAccountHasBeenUnlockedInteractivelyHasBeenCalled = true
+        try setAccountHasBeenUnlockedInteractivelyResult.get()
+    }
+
     func setActiveAccount(userId: String) async throws {
         guard let accounts,
               let match = accounts.first(where: { account in
@@ -338,6 +364,11 @@ class MockStateService: StateService { // swiftlint:disable:this type_body_lengt
     func setEnvironmentUrls(_ environmentUrls: EnvironmentUrlData, userId: String?) async throws {
         let userId = try unwrapUserId(userId)
         self.environmentUrls[userId] = environmentUrls
+    }
+
+    func setEvents(_ events: [EventData], userId: String?) async throws {
+        let userId = try unwrapUserId(userId)
+        self.events[userId] = events
     }
 
     func setForcePasswordResetReason(_ reason: ForcePasswordResetReason?, userId: String?) async throws {

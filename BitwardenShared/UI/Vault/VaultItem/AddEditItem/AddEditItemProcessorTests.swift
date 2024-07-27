@@ -18,6 +18,7 @@ class AddEditItemProcessorTests: BitwardenTestCase {
     var coordinator: MockCoordinator<VaultItemRoute, VaultItemEvent>!
     var delegate: MockCipherItemOperationDelegate!
     var errorReporter: MockErrorReporter!
+    var eventService: MockEventService!
     var pasteboardService: MockPasteboardService!
     var policyService: MockPolicyService!
     var stateService: MockStateService!
@@ -37,6 +38,7 @@ class AddEditItemProcessorTests: BitwardenTestCase {
         coordinator = MockCoordinator<VaultItemRoute, VaultItemEvent>()
         delegate = MockCipherItemOperationDelegate()
         errorReporter = MockErrorReporter()
+        eventService = MockEventService()
         pasteboardService = MockPasteboardService()
         policyService = MockPolicyService()
         stateService = MockStateService()
@@ -50,6 +52,7 @@ class AddEditItemProcessorTests: BitwardenTestCase {
                 authRepository: authRepository,
                 cameraService: cameraService,
                 errorReporter: errorReporter,
+                eventService: eventService,
                 httpClient: client,
                 pasteboardService: pasteboardService,
                 policyService: policyService,
@@ -78,6 +81,7 @@ class AddEditItemProcessorTests: BitwardenTestCase {
         client = nil
         coordinator = nil
         errorReporter = nil
+        eventService = nil
         pasteboardService = nil
         stateService = nil
         subject = nil
@@ -485,8 +489,8 @@ class AddEditItemProcessorTests: BitwardenTestCase {
     /// and navigates to the `.dismiss()` route.
     func test_didCompleteCapture_success() throws {
         subject.state.loginState.totpState = .none
-        let key = String.base32Key
-        let keyConfig = try XCTUnwrap(TOTPKeyModel(authenticatorKey: key))
+        let key = String.standardTotpKey
+        let keyConfig = TOTPKeyModel(authenticatorKey: key)
         totpService.getTOTPConfigResult = .success(keyConfig)
         let captureCoordinator = MockCoordinator<AuthenticatorKeyCaptureRoute, AuthenticatorKeyCaptureEvent>()
         subject.didCompleteCapture(captureCoordinator.asAnyCoordinator(), with: key)
@@ -496,7 +500,7 @@ class AddEditItemProcessorTests: BitwardenTestCase {
         }
         XCTAssertNotNil(dismissAction)
         dismissAction?.action()
-        XCTAssertEqual(subject.state.loginState.authenticatorKey, .base32Key)
+        XCTAssertEqual(subject.state.loginState.authenticatorKey, .standardTotpKey)
         XCTAssertEqual(subject.state.toast?.text, Localizations.authenticatorKeyAdded)
     }
 
@@ -695,6 +699,74 @@ class AddEditItemProcessorTests: BitwardenTestCase {
         )
         XCTAssertEqual(subject.state.ownershipOptions, [.personal(email: "user@bitwarden.com")])
         try XCTAssertFalse(XCTUnwrap(vaultRepository.fetchCollectionsIncludeReadOnly))
+
+        XCTAssertNil(eventService.collectCipherId)
+        XCTAssertNil(eventService.collectEventType)
+    }
+
+    /// `perform(_:)` with `.fetchCipherOptions` handles errors.
+    func test_perform_fetchCipherOptions_error() async {
+        vaultRepository.fetchCipherOwnershipOptions = [.personal(email: "user@bitwarden.com")]
+        vaultRepository.fetchCollectionsResult = .failure(BitwardenTestError.example)
+        vaultRepository.fetchFoldersResult = .failure(BitwardenTestError.example)
+
+        await subject.perform(.fetchCipherOptions)
+
+        XCTAssertEqual(subject.state.collections, [])
+        XCTAssertEqual(subject.state.folders, [])
+        XCTAssertEqual(subject.state.ownershipOptions, [])
+
+        XCTAssertEqual(errorReporter.errors as? [BitwardenTestError], [.example])
+    }
+
+    /// `perform(_:)` with `.fetchCipherOptions` sends events on edit.
+    func test_perform_fetchCipherOptions_events() async {
+        subject = AddEditItemProcessor(
+            appExtensionDelegate: appExtensionDelegate,
+            coordinator: coordinator.asAnyCoordinator(),
+            delegate: delegate,
+            services: ServiceContainer.withMocks(
+                authRepository: authRepository,
+                cameraService: cameraService,
+                errorReporter: errorReporter,
+                eventService: eventService,
+                httpClient: client,
+                pasteboardService: pasteboardService,
+                policyService: policyService,
+                stateService: stateService,
+                totpService: totpService,
+                vaultRepository: vaultRepository
+            ),
+            state: CipherItemState(
+                existing: CipherView.fixture(id: "100"),
+                hasPremium: true
+            )!
+        )
+        let collections: [CollectionView] = [
+            .fixture(id: "1", name: "Design"),
+            .fixture(id: "2", name: "Engineering"),
+        ]
+        let folders: [FolderView] = [
+            .fixture(id: "1", name: "Social"),
+            .fixture(id: "2", name: "Work"),
+        ]
+
+        vaultRepository.fetchCipherOwnershipOptions = [.personal(email: "user@bitwarden.com")]
+        vaultRepository.fetchCollectionsResult = .success(collections)
+        vaultRepository.fetchFoldersResult = .success(folders)
+
+        await subject.perform(.fetchCipherOptions)
+
+        XCTAssertEqual(subject.state.collections, collections)
+        XCTAssertEqual(
+            subject.state.folders,
+            [.default] + folders.map { .custom($0) }
+        )
+        XCTAssertEqual(subject.state.ownershipOptions, [.personal(email: "user@bitwarden.com")])
+        try XCTAssertFalse(XCTUnwrap(vaultRepository.fetchCollectionsIncludeReadOnly))
+
+        XCTAssertEqual(eventService.collectCipherId, "100")
+        XCTAssertEqual(eventService.collectEventType, .cipherClientViewed)
     }
 
     /// `perform(_:)` with `.fetchCipherOptions` fetches the ownership options for a cipher and
@@ -1104,7 +1176,7 @@ class AddEditItemProcessorTests: BitwardenTestCase {
 
     /// `receive(_:)` with `.clearTOTPKey` clears the authenticator key.
     func test_receive_clearTOTPKey() {
-        subject.state.loginState.totpState = LoginTOTPState(.base32Key)
+        subject.state.loginState.totpState = LoginTOTPState(.standardTotpKey)
         subject.receive(.totpKeyChanged(nil))
 
         XCTAssertNil(subject.state.loginState.authenticatorKey)
@@ -1427,6 +1499,40 @@ class AddEditItemProcessorTests: BitwardenTestCase {
         XCTAssertTrue(subject.state.loginState.isPasswordVisible)
     }
 
+    /// `receive(_:)` with `.togglePasswordVisibilityChanged` with `true` when editing
+    ///  sends an event.
+    func test_receive_togglePasswordVisibilityChanged_withTrue_whenEditing() {
+        subject = AddEditItemProcessor(
+            appExtensionDelegate: appExtensionDelegate,
+            coordinator: coordinator.asAnyCoordinator(),
+            delegate: delegate,
+            services: ServiceContainer.withMocks(
+                authRepository: authRepository,
+                cameraService: cameraService,
+                errorReporter: errorReporter,
+                eventService: eventService,
+                httpClient: client,
+                pasteboardService: pasteboardService,
+                policyService: policyService,
+                stateService: stateService,
+                totpService: totpService,
+                vaultRepository: vaultRepository
+            ),
+            state: CipherItemState(
+                existing: CipherView.fixture(id: "100"),
+                hasPremium: true
+            )!
+        )
+        subject.state.loginState.isPasswordVisible = false
+
+        subject.receive(.togglePasswordVisibilityChanged(true))
+        XCTAssertTrue(subject.state.loginState.isPasswordVisible)
+
+        waitFor(eventService.collectCipherId != nil)
+        XCTAssertEqual(eventService.collectCipherId, "100")
+        XCTAssertEqual(eventService.collectEventType, .cipherClientToggledPasswordVisible)
+    }
+
     /// `receive(_:)` with `.togglePasswordVisibilityChanged` with `false` updates the state correctly.
     func test_receive_togglePasswordVisibilityChanged_withFalse() {
         subject.state.loginState.isPasswordVisible = true
@@ -1438,35 +1544,36 @@ class AddEditItemProcessorTests: BitwardenTestCase {
         XCTAssertFalse(subject.state.loginState.isPasswordVisible)
     }
 
-    /// `receive(_:)` with `.totpFieldLeftFocus` clears the authenticator key.
-    func test_receive_totpFieldLeftFocus_invalidKey() throws {
-        let badKey = "pasta batman"
-        subject.state.loginState.totpState = LoginTOTPState(badKey)
+    /// `receive(_:)` with `.totpFieldLeftFocus` with a key with spaces.
+    func test_receive_totpFieldLeftFocus_validKey_standardState() throws {
+        let keyWithSpaces = "pasta batman"
+        subject.state.loginState.totpState = LoginTOTPState(keyWithSpaces)
         subject.receive(.totpFieldLeftFocus)
 
-        XCTAssertNil(subject.state.loginState.totpState.authKeyModel?.rawAuthenticatorKey)
-        XCTAssertEqual(badKey, subject.state.loginState.totpState.rawAuthenticatorKeyString)
-        waitFor(!coordinator.alertShown.isEmpty)
-        let alert = try XCTUnwrap(coordinator.alertShown.last)
-        XCTAssertEqual(alert.title, Localizations.authenticatorKeyReadError)
-        XCTAssertNil(alert.message)
         XCTAssertEqual(
-            alert.alertActions,
-            [
-                AlertAction(title: Localizations.ok, style: .default),
-            ]
+            subject.state.loginState.totpState.authKeyModel?.rawAuthenticatorKey,
+            keyWithSpaces
+        )
+        XCTAssertEqual(
+            keyWithSpaces,
+            subject.state.loginState.totpState.rawAuthenticatorKeyString
+        )
+        XCTAssertTrue(coordinator.alertShown.isEmpty)
+        XCTAssertEqual(
+            subject.state.loginState.totpState.authKeyModel?.totpKey,
+            .standard(key: keyWithSpaces)
         )
     }
 
     /// `receive(_:)` with `.totpFieldLeftFocus` clears the authenticator key.
     func test_receive_totpFieldLeftFocus_validKey() {
-        subject.state.loginState.totpState = LoginTOTPState(.base32Key)
+        subject.state.loginState.totpState = LoginTOTPState(.standardTotpKey)
         subject.receive(.totpFieldLeftFocus)
 
         XCTAssertTrue(coordinator.alertShown.isEmpty)
         switch subject.state.loginState.totpState {
         case let .key(keyModel):
-            XCTAssertEqual(keyModel.rawAuthenticatorKey, .base32Key)
+            XCTAssertEqual(keyModel.rawAuthenticatorKey, .standardTotpKey)
         default:
             XCTFail("Unexpected State")
         }

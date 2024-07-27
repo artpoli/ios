@@ -4,6 +4,8 @@ import XCTest
 
 @testable import BitwardenShared
 
+// swiftlint:disable file_length
+
 class AppProcessorTests: BitwardenTestCase { // swiftlint:disable:this type_body_length
     // MARK: Properties
 
@@ -13,6 +15,8 @@ class AppProcessorTests: BitwardenTestCase { // swiftlint:disable:this type_body
     var clientService: MockClientService!
     var coordinator: MockCoordinator<AppRoute, AppEvent>!
     var errorReporter: MockErrorReporter!
+    var fido2UserInterfaceHelper: MockFido2UserInterfaceHelper!
+    var eventService: MockEventService!
     var migrationService: MockMigrationService!
     var notificationCenterService: MockNotificationCenterService!
     var notificationService: MockNotificationService!
@@ -38,6 +42,8 @@ class AppProcessorTests: BitwardenTestCase { // swiftlint:disable:this type_body
         appModule.authRouter = router
         appModule.appCoordinator = coordinator
         errorReporter = MockErrorReporter()
+        fido2UserInterfaceHelper = MockFido2UserInterfaceHelper()
+        eventService = MockEventService()
         migrationService = MockMigrationService()
         notificationCenterService = MockNotificationCenterService()
         notificationService = MockNotificationService()
@@ -54,6 +60,8 @@ class AppProcessorTests: BitwardenTestCase { // swiftlint:disable:this type_body
                 autofillCredentialService: autofillCredentialService,
                 clientService: clientService,
                 errorReporter: errorReporter,
+                eventService: eventService,
+                fido2UserInterfaceHelper: fido2UserInterfaceHelper,
                 migrationService: migrationService,
                 notificationService: notificationService,
                 notificationCenterService: notificationCenterService,
@@ -75,9 +83,12 @@ class AppProcessorTests: BitwardenTestCase { // swiftlint:disable:this type_body
         clientService = nil
         coordinator = nil
         errorReporter = nil
+        fido2UserInterfaceHelper = nil
+        eventService = nil
         migrationService = nil
         notificationCenterService = nil
         notificationService = nil
+        router = nil
         stateService = nil
         subject = nil
         syncService = nil
@@ -87,6 +98,18 @@ class AppProcessorTests: BitwardenTestCase { // swiftlint:disable:this type_body
     }
 
     // MARK: Tests
+
+    /// `init()` subscribes to app background events and logs an error if one occurs when
+    /// setting the last active time.
+    func test_appBackgrounded_error() {
+        stateService.activeAccount = .fixture()
+        vaultTimeoutService.setLastActiveTimeError = BitwardenTestError.example
+
+        notificationCenterService.didEnterBackgroundSubject.send()
+
+        waitFor(!errorReporter.errors.isEmpty)
+        XCTAssertEqual(errorReporter.errors as? [BitwardenTestError], [.example])
+    }
 
     /// The user's last active time is updated when the app is backgrounded.
     func test_appBackgrounded_setLastActiveTime() {
@@ -121,10 +144,83 @@ class AppProcessorTests: BitwardenTestCase { // swiftlint:disable:this type_body
         XCTAssertEqual(errorReporter.errors.last as? BitwardenTestError, .example)
     }
 
+    /// `init()` subscribes to will enter foreground events and handles an active user timeout.
+    func test_init_appForeground_activeUserTimeout() {
+        let account1 = Account.fixture(profile: .fixture(userId: "1"))
+        let account2 = Account.fixture(profile: .fixture(userId: "2"))
+        stateService.activeAccount = account1
+        stateService.accounts = [account1, account2]
+
+        vaultTimeoutService.shouldSessionTimeout["1"] = true
+        notificationCenterService.willEnterForegroundSubject.send()
+
+        waitFor(!coordinator.events.isEmpty)
+        XCTAssertEqual(coordinator.events, [.didTimeout(userId: "1")])
+    }
+
+    /// `init()` subscribes to will enter foreground events and logs an error if one occurs when
+    /// checking timeouts.
+    func test_init_appForeground_error() {
+        let account = Account.fixture()
+        stateService.activeAccount = account
+        stateService.accounts = [account]
+        vaultTimeoutService.shouldSessionTimeoutError = BitwardenTestError.example
+
+        notificationCenterService.willEnterForegroundSubject.send()
+
+        waitFor(!errorReporter.errors.isEmpty)
+        XCTAssertEqual(errorReporter.errors as? [BitwardenTestError], [.example])
+    }
+
+    /// `init()` subscribes to will enter foreground events and handles an inactive user timeout.
+    func test_init_appForeground_inactiveUserTimeout() {
+        let account1 = Account.fixture(profile: .fixture(userId: "1"))
+        let account2 = Account.fixture(profile: .fixture(userId: "2"))
+        stateService.activeAccount = account1
+        stateService.accounts = [account1, account2]
+
+        vaultTimeoutService.shouldSessionTimeout["2"] = true
+        notificationCenterService.willEnterForegroundSubject.send()
+
+        waitFor(vaultTimeoutService.isClientLocked["2"] == true)
+        XCTAssertEqual(vaultTimeoutService.isClientLocked, ["2": true])
+    }
+
+    /// `init()` subscribes to will enter foreground events and handles an inactive user timeout
+    /// with an logout action.
+    func test_init_appForeground_inactiveUserTimeoutLogout() {
+        let account1 = Account.fixture(profile: .fixture(userId: "1"))
+        let account2 = Account.fixture(profile: .fixture(userId: "2"))
+        stateService.activeAccount = account1
+        stateService.accounts = [account1, account2]
+        authRepository.sessionTimeoutAction["2"] = .logout
+
+        vaultTimeoutService.shouldSessionTimeout["2"] = true
+        notificationCenterService.willEnterForegroundSubject.send()
+
+        waitFor(authRepository.logoutCalled)
+        XCTAssertTrue(authRepository.logoutCalled)
+        XCTAssertEqual(authRepository.logoutUserId, "2")
+    }
+
     /// `init()` sets the `AppProcessor` as the delegate of any necessary services.
     func test_init_setDelegates() {
         XCTAssertIdentical(notificationService.delegate, subject)
         XCTAssertIdentical(syncService.delegate, subject)
+    }
+
+    /// `init()` starts the upload-event timer and attempts to upload events.
+    func test_init_uploadEvents() {
+        XCTAssertNotNil(subject.sendEventTimer)
+        XCTAssertEqual(subject.sendEventTimer?.isValid, true)
+        subject.sendEventTimer?.fire() // Necessary because it's a 5-minute timer
+        waitFor(eventService.uploadCalled)
+        XCTAssertTrue(eventService.uploadCalled)
+    }
+
+    /// `getter:isAutofillingFromList` returns `false` when delegate is not a Fido2 one.
+    func test_isAutofillingFromList_falseNoFido2Delegate() async throws {
+        XCTAssertFalse(subject.isAutofillingFromList)
     }
 
     /// `messageReceived(_:notificationDismissed:notificationTapped)` passes the data to the notification service.
@@ -136,14 +232,67 @@ class AppProcessorTests: BitwardenTestCase { // swiftlint:disable:this type_body
         XCTAssertEqual(notificationService.messageReceivedMessage?.keys.first, "knock knock")
     }
 
-    /// `openUrl(_:)` handles receiving an OTP deep link and routing to the vault item selection screen.
-    func test_openUrl_otpKey() async throws {
+    /// `onNeedsUserInteraction()` doesn't throw when `appExtensionDelegate` is not a Fido2 one.
+    func test_onNeedsUserInteraction_flowWithUserInteraction() async {
+        await assertAsyncDoesNotThrow {
+            try await subject.onNeedsUserInteraction()
+        }
+    }
+
+    /// `openUrl(_:)` handles receiving an OTP deep link and setting an auth completion route on the
+    /// coordinator to handle routing to the vault item selection screen when the vault is unlocked.
+    func test_openUrl_otpKey_vaultLocked() async throws {
         let otpKey: String = .otpAuthUriKeyComplete
 
         try await subject.openUrl(XCTUnwrap(URL(string: otpKey)))
 
         let model = try XCTUnwrap(OTPAuthModel(otpAuthKey: otpKey))
+        XCTAssertEqual(coordinator.events, [.setAuthCompletionRoute(.tab(.vault(.vaultItemSelection(model))))])
+    }
+
+    /// `openUrl(_:)` handles receiving an OTP deep link and routing to the vault item selection screen.
+    func test_openUrl_otpKey_vaultUnlocked() async throws {
+        let account = Account.fixture()
+        let otpKey: String = .otpAuthUriKeyComplete
+        stateService.activeAccount = .fixture()
+        vaultTimeoutService.isClientLocked[account.profile.userId] = false
+
+        try await subject.openUrl(XCTUnwrap(URL(string: otpKey)))
+
+        let model = try XCTUnwrap(OTPAuthModel(otpAuthKey: otpKey))
         XCTAssertEqual(coordinator.routes.last, .tab(.vault(.vaultItemSelection(model))))
+    }
+
+    /// `openUrl(_:)` handles receiving an OTP deep link and setting an auth completion route on the
+    /// coordinator if the the user's vault is unlocked but will be timing out as the app is
+    /// foregrounded.
+    func test_openUrl_otpKey_vaultUnlockedTimeout() async throws {
+        let account = Account.fixture()
+        let otpKey: String = .otpAuthUriKeyComplete
+        stateService.activeAccount = .fixture()
+        vaultTimeoutService.isClientLocked[account.profile.userId] = false
+        vaultTimeoutService.shouldSessionTimeout[account.profile.userId] = true
+
+        try await subject.openUrl(XCTUnwrap(URL(string: otpKey)))
+
+        let model = try XCTUnwrap(OTPAuthModel(otpAuthKey: otpKey))
+        XCTAssertEqual(coordinator.events, [.setAuthCompletionRoute(.tab(.vault(.vaultItemSelection(model))))])
+    }
+
+    /// `openUrl(_:)` handles receiving an OTP deep link and setting an auth completion route on the
+    /// coordinator if the the user's vault is unlocked but will be timing out as the app is
+    /// foregrounded.
+    func test_openUrl_otpKey_vaultUnlockedTimeoutError() async throws {
+        let account = Account.fixture()
+        let otpKey: String = .otpAuthUriKeyComplete
+        stateService.activeAccount = .fixture()
+        vaultTimeoutService.isClientLocked[account.profile.userId] = false
+        vaultTimeoutService.shouldSessionTimeoutError = BitwardenTestError.example
+
+        try await subject.openUrl(XCTUnwrap(URL(string: otpKey)))
+
+        let model = try XCTUnwrap(OTPAuthModel(otpAuthKey: otpKey))
+        XCTAssertEqual(coordinator.events, [.setAuthCompletionRoute(.tab(.vault(.vaultItemSelection(model))))])
     }
 
     /// `openUrl(_:)` handles receiving an OTP deep link if the URL isn't an OTP key.
@@ -297,39 +446,6 @@ class AppProcessorTests: BitwardenTestCase { // swiftlint:disable:this type_body
         XCTAssertEqual(coordinator.events, [.didLogout(userId: "1", userInitiated: false)])
     }
 
-    /// Upon a session timeout on app foreground, send the user to the `.didTimeout` route.
-    func test_shouldSessionTimeout_navigateTo_didTimeout() throws {
-        let rootNavigator = MockRootNavigator()
-        let user = Account.fixture()
-        let userId = user.profile.userId
-        let user2 = Account.fixture()
-        let user2Id = user2.profile.userId
-
-        stateService.activeAccount = user
-        stateService.accounts = [user, user2]
-
-        let task = Task {
-            await subject.start(appContext: .mainApp, navigator: rootNavigator, window: nil)
-        }
-        waitFor(coordinator.events == [.didStart])
-        task.cancel()
-
-        vaultTimeoutService.shouldSessionTimeout[userId] = true
-        notificationCenterService.willEnterForegroundSubject.send()
-
-        waitFor(vaultTimeoutService.shouldSessionTimeout[userId] == true)
-        waitFor(coordinator.events.count > 1)
-        waitFor(vaultTimeoutService.isLocked(userId: user2Id))
-
-        XCTAssertEqual(
-            coordinator.events,
-            [
-                .didStart,
-                .didTimeout(userId: userId),
-            ]
-        )
-    }
-
     /// `showLoginRequest(_:)` navigates to show the login request view.
     func test_showLoginRequest() {
         subject.showLoginRequest(.fixture())
@@ -368,5 +484,20 @@ class AppProcessorTests: BitwardenTestCase { // swiftlint:disable:this type_body
         XCTAssertTrue(appModule.appCoordinator.isStarted)
         XCTAssertEqual(appModule.appCoordinator.events, [.didStart])
         XCTAssertEqual(migrationService.didPerformMigrations, true)
+    }
+
+    /// `unlockVaultWithNeverlockKey()` unlocks it calling the auth repository.
+    func test_unlockVaultWithNeverlockKey() async throws {
+        try await subject.unlockVaultWithNeverlockKey()
+
+        XCTAssertTrue(authRepository.unlockVaultWithNeverlockKeyCalled)
+    }
+
+    /// `unlockVaultWithNeverlockKey()` throws because auth repository call throws.
+    func test_unlockVaultWithNeverlockKey_throws() async throws {
+        authRepository.unlockVaultWithNeverlockResult = .failure(BitwardenTestError.example)
+        await assertAsyncThrows(error: BitwardenTestError.example) {
+            try await subject.unlockVaultWithNeverlockKey()
+        }
     }
 }

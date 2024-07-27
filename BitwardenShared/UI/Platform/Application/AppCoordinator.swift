@@ -26,6 +26,9 @@ class AppCoordinator: Coordinator, HasRootNavigator {
     /// A delegate used to communicate with the app extension.
     private weak var appExtensionDelegate: AppExtensionDelegate?
 
+    /// A route to navigate to after auth completes.
+    private(set) var authCompletionRoute: AppRoute?
+
     /// The coordinator currently being displayed.
     private var childCoordinator: AnyObject?
 
@@ -75,6 +78,8 @@ class AppCoordinator: Coordinator, HasRootNavigator {
             await handleAuthEvent(.didStart)
         case let .didTimeout(userId):
             await handleAuthEvent(.didTimeout(userId: userId))
+        case let .setAuthCompletionRoute(route):
+            authCompletionRoute = route
         }
     }
 
@@ -109,6 +114,23 @@ class AppCoordinator: Coordinator, HasRootNavigator {
     private func handleAuthEvent(_ authEvent: AuthEvent) async {
         let router = module.makeAuthRouter()
         let route = await router.handleAndRoute(authEvent)
+
+        // HACK: This is needed for the case when we have all of the next:
+        // - Autofill with Fido2 credential
+        // - Never timeout
+        // - Needs user interaction because of user verification
+        // When this happens, then sometimes the biometrics prompt may not be shown to the user
+        // because some race condition from the OS showing the view vs displaying the bio prompt.
+        // To fix this we show a transparent navigation controller which makes the
+        // biometric prompt work again.
+        if route == .completeWithNeverUnlockKey,
+           let fido2AppExtensionDelegate = appExtensionDelegate as? Fido2AppExtensionDelegate,
+           case .autofillFido2Credential = fido2AppExtensionDelegate.extensionMode {
+            showTransparentController()
+            didCompleteAuth()
+            return
+        }
+
         showAuth(route)
     }
 
@@ -222,6 +244,17 @@ class AppCoordinator: Coordinator, HasRootNavigator {
         }
     }
 
+    /// Adds a transparent navigation controller to the root navigator.
+    /// This is needed for the Autofill Fido2 flow when unlocking with the never unlock key
+    /// and performing user verification. If we don't do this, the biometrics prompt may not be presented
+    /// to the user and will always be treated as failed by the OS.
+    private func showTransparentController() {
+        guard let rootNavigator else { return }
+        let navigationController = UINavigationController()
+        navigationController.setNavigationBarHidden(true, animated: false)
+        rootNavigator.show(child: navigationController)
+    }
+
     /// Shows the vault route (not in a tab). This is used within the app extensions.
     ///
     /// - Parameter route: The vault route to show.
@@ -260,6 +293,11 @@ extension AppCoordinator: AuthCoordinatorDelegate {
             navigate(to: route)
         case .mainApp:
             showTab(route: .vault(.list))
+
+            if let authCompletionRoute {
+                navigate(to: authCompletionRoute)
+                self.authCompletionRoute = nil
+            }
         }
     }
 }
@@ -344,13 +382,15 @@ extension AppCoordinator: SettingsCoordinatorDelegate {
 // MARK: - VaultCoordinatorDelegate
 
 extension AppCoordinator: VaultCoordinatorDelegate {
-    func switchAccount(userId: String, isAutomatic: Bool) {
+    func switchAccount(userId: String, isAutomatic: Bool, authCompletionRoute: AppRoute?) {
         Task {
+            self.authCompletionRoute = authCompletionRoute
             await handleAuthEvent(
                 .action(
                     .switchAccount(
                         isAutomatic: isAutomatic,
-                        userId: userId
+                        userId: userId,
+                        authCompletionRoute: authCompletionRoute
                     )
                 )
             )
@@ -377,4 +417,4 @@ extension AppCoordinator: VaultCoordinatorDelegate {
     func presentLoginRequest(_ loginRequest: LoginRequest) {
         showLoginRequest(loginRequest)
     }
-}
+} // swiftlint:disable:this file_length

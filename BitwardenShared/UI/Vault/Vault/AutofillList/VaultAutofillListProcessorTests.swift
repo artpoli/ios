@@ -8,8 +8,11 @@ class VaultAutofillListProcessorTests: BitwardenTestCase {
 
     var appExtensionDelegate: MockAppExtensionDelegate!
     var authRepository: MockAuthRepository!
+    var clientService: MockClientService!
     var coordinator: MockCoordinator<VaultRoute, AuthAction>!
     var errorReporter: MockErrorReporter!
+    var fido2CredentialStore: MockFido2CredentialStore!
+    var fido2UserInterfaceHelper: MockFido2UserInterfaceHelper!
     var subject: VaultAutofillListProcessor!
     var vaultRepository: MockVaultRepository!
 
@@ -20,8 +23,11 @@ class VaultAutofillListProcessorTests: BitwardenTestCase {
 
         appExtensionDelegate = MockAppExtensionDelegate()
         authRepository = MockAuthRepository()
+        clientService = MockClientService()
         coordinator = MockCoordinator()
         errorReporter = MockErrorReporter()
+        fido2CredentialStore = MockFido2CredentialStore()
+        fido2UserInterfaceHelper = MockFido2UserInterfaceHelper()
         vaultRepository = MockVaultRepository()
 
         subject = VaultAutofillListProcessor(
@@ -29,7 +35,10 @@ class VaultAutofillListProcessorTests: BitwardenTestCase {
             coordinator: coordinator.asAnyCoordinator(),
             services: ServiceContainer.withMocks(
                 authRepository: authRepository,
+                clientService: clientService,
                 errorReporter: errorReporter,
+                fido2CredentialStore: fido2CredentialStore,
+                fido2UserInterfaceHelper: fido2UserInterfaceHelper,
                 vaultRepository: vaultRepository
             ),
             state: VaultAutofillListState()
@@ -41,13 +50,21 @@ class VaultAutofillListProcessorTests: BitwardenTestCase {
 
         appExtensionDelegate = nil
         authRepository = nil
+        clientService = nil
         coordinator = nil
         errorReporter = nil
+        fido2CredentialStore = nil
+        fido2UserInterfaceHelper = nil
         subject = nil
         vaultRepository = nil
     }
 
     // MARK: Tests
+
+    /// `getter:isAutofillingFromList` returns `false` when delegate is not a Fido2 one.
+    func test_isAutofillingFromList_falseNoFido2Delegate() async throws {
+        XCTAssertFalse(subject.isAutofillingFromList)
+    }
 
     /// `vaultItemTapped(_:)` has the autofill helper handle autofill for the cipher and completes the
     /// autofill request.
@@ -59,6 +76,7 @@ class VaultAutofillListProcessorTests: BitwardenTestCase {
 
         XCTAssertEqual(appExtensionDelegate.didCompleteAutofillRequestUsername, "user@bitwarden.com")
         XCTAssertEqual(appExtensionDelegate.didCompleteAutofillRequestPassword, "PASSWORD")
+        XCTAssertFalse(fido2UserInterfaceHelper.pickedCredentialForCreationMocker.called)
     }
 
     /// `vaultItemTapped(_:)` has the autofill helper handle autofill for the cipher and shows a toast
@@ -141,7 +159,12 @@ class VaultAutofillListProcessorTests: BitwardenTestCase {
     /// `perform(_:)` with `.search()` performs a cipher search and updates the state with the results.
     func test_perform_search() {
         let ciphers: [CipherView] = [.fixture(id: "1"), .fixture(id: "2"), .fixture(id: "3")]
-        vaultRepository.searchCipherAutofillSubject.value = ciphers
+        let expectedSection = VaultListSection(
+            id: "",
+            items: ciphers.compactMap { VaultListItem(cipherView: $0) },
+            name: ""
+        )
+        vaultRepository.searchCipherAutofillSubject.value = [expectedSection]
 
         let task = Task {
             await subject.perform(.search("Bit"))
@@ -150,7 +173,7 @@ class VaultAutofillListProcessorTests: BitwardenTestCase {
         waitFor(!subject.state.ciphersForSearch.isEmpty)
         task.cancel()
 
-        XCTAssertEqual(subject.state.ciphersForSearch, ciphers.compactMap { VaultListItem(cipherView: $0) })
+        XCTAssertEqual(subject.state.ciphersForSearch, [expectedSection])
         XCTAssertFalse(subject.state.showNoResults)
     }
 
@@ -192,16 +215,21 @@ class VaultAutofillListProcessorTests: BitwardenTestCase {
     /// `perform(_:)` with `.streamAutofillItems` streams the list of autofill ciphers.
     func test_perform_streamAutofillItems() {
         let ciphers: [CipherView] = [.fixture(id: "1"), .fixture(id: "2"), .fixture(id: "3")]
-        vaultRepository.ciphersAutofillSubject.value = ciphers
+        let expectedSection = VaultListSection(
+            id: "",
+            items: ciphers.compactMap { VaultListItem(cipherView: $0) },
+            name: ""
+        )
+        vaultRepository.ciphersAutofillSubject.value = [expectedSection]
 
         let task = Task {
             await subject.perform(.streamAutofillItems)
         }
 
-        waitFor(!subject.state.ciphersForAutofill.isEmpty)
+        waitFor(!subject.state.vaultListSections.isEmpty)
         task.cancel()
 
-        XCTAssertEqual(subject.state.ciphersForAutofill, ciphers.compactMap { VaultListItem(cipherView: $0) })
+        XCTAssertEqual(subject.state.vaultListSections, [expectedSection])
     }
 
     /// `perform(_:)` with `.streamAutofillItems` logs an error if one occurs.
@@ -273,7 +301,7 @@ class VaultAutofillListProcessorTests: BitwardenTestCase {
         subject.receive(.searchStateChanged(isSearching: true))
 
         subject.receive(.searchTextChanged("Bit"))
-        subject.state.ciphersForSearch = [.fixture()]
+        subject.state.ciphersForSearch = [VaultListSection(id: "test", items: [.fixture()], name: "test")]
         subject.state.showNoResults = true
 
         subject.receive(.searchStateChanged(isSearching: true))
@@ -308,5 +336,17 @@ class VaultAutofillListProcessorTests: BitwardenTestCase {
 
         subject.receive(.toastShown(nil))
         XCTAssertNil(subject.state.toast)
+    }
+
+    /// `showAlert(_:onDismissed:)` shows the alert with the coordinator.
+    func test_showAlert_withOnDismissed() async throws {
+        subject.showAlert(Alert(title: "Test", message: "testing"), onDismissed: nil)
+        XCTAssertFalse(coordinator.alertShown.isEmpty)
+    }
+
+    /// `showAlert(_:)` shows the alert with the coordinator.
+    func test_showAlert() async throws {
+        subject.showAlert(Alert(title: "Test", message: "testing"))
+        XCTAssertFalse(coordinator.alertShown.isEmpty)
     }
 }

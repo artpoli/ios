@@ -135,7 +135,9 @@ extension Alert {
                     await action(.copy(
                         toast: Localizations.number,
                         value: number,
-                        requiresMasterPasswordReprompt: cipherView.reprompt == .password && hasMasterPassword
+                        requiresMasterPasswordReprompt: cipherView.reprompt == .password && hasMasterPassword,
+                        logEvent: nil,
+                        cipherId: nil
                     ))
                 })
             }
@@ -144,7 +146,9 @@ extension Alert {
                     await action(.copy(
                         toast: Localizations.securityCode,
                         value: code,
-                        requiresMasterPasswordReprompt: cipherView.reprompt == .password && hasMasterPassword
+                        requiresMasterPasswordReprompt: cipherView.reprompt == .password && hasMasterPassword,
+                        logEvent: .cipherClientCopiedCardCode,
+                        cipherId: cipherView.id
                     ))
                 })
             }
@@ -154,7 +158,9 @@ extension Alert {
                     await action(.copy(
                         toast: Localizations.username,
                         value: username,
-                        requiresMasterPasswordReprompt: false
+                        requiresMasterPasswordReprompt: false,
+                        logEvent: nil,
+                        cipherId: nil
                     ))
                 })
             }
@@ -164,14 +170,16 @@ extension Alert {
                     await action(.copy(
                         toast: Localizations.password,
                         value: password,
-                        requiresMasterPasswordReprompt: cipherView.reprompt == .password && hasMasterPassword
+                        requiresMasterPasswordReprompt: cipherView.reprompt == .password && hasMasterPassword,
+                        logEvent: .cipherClientCopiedPassword,
+                        cipherId: cipherView.id
                     ))
                 })
             }
-            if canCopyTotp, let totp = cipherView.login?.totp, let totpKey = TOTPKeyModel(authenticatorKey: totp) {
+            if canCopyTotp, let totp = cipherView.login?.totp {
                 alertActions.append(AlertAction(title: Localizations.copyTotp, style: .default) { _, _ in
                     await action(.copyTotp(
-                        totpKey: totpKey,
+                        totpKey: TOTPKeyModel(authenticatorKey: totp),
                         requiresMasterPasswordReprompt: cipherView.reprompt == .password && hasMasterPassword
                     ))
                 })
@@ -192,7 +200,9 @@ extension Alert {
                     await action(.copy(
                         toast: Localizations.notes,
                         value: notes,
-                        requiresMasterPasswordReprompt: false
+                        requiresMasterPasswordReprompt: false,
+                        logEvent: nil,
+                        cipherId: nil
                     ))
                 })
             }

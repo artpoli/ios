@@ -56,6 +56,8 @@ final class AddEditItemProcessor: StateProcessor<// swiftlint:disable:this type_
         & HasAuthRepository
         & HasCameraService
         & HasErrorReporter
+        & HasEventService
+        & HasFido2UserInterfaceHelper
         & HasPasteboardService
         & HasPolicyService
         & HasStateService
@@ -178,6 +180,14 @@ final class AddEditItemProcessor: StateProcessor<// swiftlint:disable:this type_
             state.loginState.uris.remove(at: index)
         case let .togglePasswordVisibilityChanged(newValue):
             state.loginState.isPasswordVisible = newValue
+            if newValue, !state.configuration.isAdding {
+                Task {
+                    await services.eventService.collect(
+                        eventType: .cipherClientToggledPasswordVisible,
+                        cipherId: state.cipher.id
+                    )
+                }
+            }
         case let .toastShown(newValue):
             state.toast = newValue
         case .totpFieldLeftFocus:
@@ -246,6 +256,10 @@ final class AddEditItemProcessor: StateProcessor<// swiftlint:disable:this type_
             let folders = try await services.vaultRepository.fetchFolders()
                 .map { DefaultableType<FolderView>.custom($0) }
             state.folders = [.default] + folders
+
+            if !state.configuration.isAdding {
+                await services.eventService.collect(eventType: .cipherClientViewed, cipherId: state.cipher.id)
+            }
         } catch {
             services.errorReporter.log(error: error)
         }
@@ -255,7 +269,7 @@ final class AddEditItemProcessor: StateProcessor<// swiftlint:disable:this type_
     ///
     /// - Parameter action: The action that was sent from the `AddEditCustomFieldsView`.
     ///
-    private func handleCustomFieldAction(_ action: AddEditCustomFieldsAction) {
+    private func handleCustomFieldAction(_ action: AddEditCustomFieldsAction) { // swiftlint:disable:this cyclomatic_complexity line_length
         switch action {
         case let .booleanFieldChanged(newValue, index):
             guard state.customFieldsState.customFields.indices.contains(index) else { return }
@@ -297,6 +311,14 @@ final class AddEditItemProcessor: StateProcessor<// swiftlint:disable:this type_
         case let .togglePasswordVisibilityChanged(isPasswordVisible, index):
             guard state.customFieldsState.customFields.indices.contains(index) else { return }
             state.customFieldsState.customFields[index].isPasswordVisible = isPasswordVisible
+            if isPasswordVisible {
+                Task {
+                    await services.eventService.collect(
+                        eventType: .cipherClientToggledHiddenFieldVisible,
+                        cipherId: state.cipher.id
+                    )
+                }
+            }
         }
     }
 
@@ -340,8 +362,26 @@ final class AddEditItemProcessor: StateProcessor<// swiftlint:disable:this type_
             state.cardItemState.expirationYear = year
         case let .toggleCodeVisibilityChanged(isVisible):
             state.cardItemState.isCodeVisible = isVisible
+            if isVisible {
+                let cipherId = state.cipher.id
+                Task {
+                    await services.eventService.collect(
+                        eventType: .cipherClientToggledCardCodeVisible,
+                        cipherId: cipherId
+                    )
+                }
+            }
         case let .toggleNumberVisibilityChanged(isVisible):
             state.cardItemState.isNumberVisible = isVisible
+            if isVisible {
+                let cipherId = state.cipher.id
+                Task {
+                    await services.eventService.collect(
+                        eventType: .cipherClientToggledCardNumberVisible,
+                        cipherId: cipherId
+                    )
+                }
+            }
         }
     }
 
@@ -510,15 +550,20 @@ final class AddEditItemProcessor: StateProcessor<// swiftlint:disable:this type_
         do {
             try EmptyInputValidator(fieldName: Localizations.name)
                 .validate(input: state.name)
+
+            let userVerified = try await fido2CheckUserIfNeeded()
+
             coordinator.showLoadingOverlay(title: Localizations.saving)
             switch state.configuration {
             case .add:
-                try await addItem()
+                try await addItem(fido2UserVerified: userVerified)
             case let .existing(cipherView):
                 try await updateItem(cipherView: cipherView)
             }
         } catch let error as InputValidationError {
             coordinator.showAlert(Alert.inputValidationAlert(error: error))
+            return
+        } catch UserVerificationError.cancelled {
             return
         } catch {
             coordinator.showAlert(.networkResponseError(error))
@@ -528,10 +573,39 @@ final class AddEditItemProcessor: StateProcessor<// swiftlint:disable:this type_
 
     /// Adds the item currently in `state`.
     ///
-    private func addItem() async throws {
+    private func addItem(fido2UserVerified: Bool) async throws {
+        if let fido2AppExtensionDelegate = appExtensionDelegate as? Fido2AppExtensionDelegate,
+           fido2AppExtensionDelegate.isCreatingFido2Credential {
+            services.fido2UserInterfaceHelper.pickedCredentialForCreation(
+                result: .success(
+                    CheckUserAndPickCredentialForCreationResult(
+                        cipher: CipherViewWrapper(cipher: state.cipher),
+                        checkUserResult: CheckUserResult(userPresent: true, userVerified: fido2UserVerified)
+                    )
+                )
+            )
+            return
+        }
+
         try await services.vaultRepository.addCipher(state.cipher)
         coordinator.hideLoadingOverlay()
         handleDismiss(didAddItem: true)
+    }
+
+    /// Checks user verification if needed on Fido2 flows.
+    private func fido2CheckUserIfNeeded() async throws -> Bool {
+        guard let fido2AppExtensionDelegate = appExtensionDelegate as? Fido2AppExtensionDelegate,
+              fido2AppExtensionDelegate.isCreatingFido2Credential,
+              let fido2CreationOptions = services.fido2UserInterfaceHelper.fido2CreationOptions else {
+            return false
+        }
+
+        let result = try await services.fido2UserInterfaceHelper.checkUser(
+            userVerificationPreference: fido2CreationOptions.requireVerification,
+            credential: state.cipher,
+            shouldThrowEnforcingRequiredVerification: true
+        )
+        return result.userVerified
     }
 
     /// Soft Deletes the item currently stored in `state`.
@@ -652,7 +726,6 @@ extension AddEditItemProcessor: AuthenticatorKeyCaptureDelegate {
         guard key != state.loginState.totpState.authKeyModel?.rawAuthenticatorKey else { return }
         let newState = LoginTOTPState(key)
         state.loginState.totpState = newState
-        guard case .invalid = newState else { return }
         coordinator.showAlert(.totpScanFailureAlert())
     }
 

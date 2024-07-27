@@ -42,8 +42,10 @@ public protocol VaultCoordinatorDelegate: AnyObject {
     /// - Parameters:
     ///   - userId: The user Id of the account.
     ///   - isAutomatic: Did the system trigger the account switch?
+    ///   - authCompletionRoute: An optional route that should be navigated to after switching
+    ///     accounts and vault unlock
     ///
-    func switchAccount(userId: String, isAutomatic: Bool)
+    func switchAccount(userId: String, isAutomatic: Bool, authCompletionRoute: AppRoute?)
 }
 
 // MARK: - VaultCoordinator
@@ -56,11 +58,16 @@ final class VaultCoordinator: Coordinator, HasStackNavigator {
     typealias Module = GeneratorModule
         & VaultItemModule
 
-    typealias Services = HasAuthRepository
+    typealias Services = HasApplication
+        & HasAuthRepository
         & HasAuthService
+        & HasAutofillCredentialService
         & HasCameraService
+        & HasClientService
         & HasEnvironmentService
         & HasErrorReporter
+        & HasFido2CredentialStore
+        & HasFido2UserInterfaceHelper
         & HasLocalAuthService
         & HasNotificationService
         & HasStateService
@@ -122,8 +129,12 @@ final class VaultCoordinator: Coordinator, HasStackNavigator {
             delegate?.logout(userId: userId, userInitiated: userInitiated)
         case let .lockVault(userId):
             delegate?.lockVault(userId: userId)
-        case let .switchAccount(isAutomatic, userId):
-            delegate?.switchAccount(userId: userId, isAutomatic: isAutomatic)
+        case let .switchAccount(isAutomatic, userId, authCompletionRoute):
+            delegate?.switchAccount(
+                userId: userId,
+                isAutomatic: isAutomatic,
+                authCompletionRoute: authCompletionRoute
+            )
         }
     }
 
@@ -202,6 +213,10 @@ final class VaultCoordinator: Coordinator, HasStackNavigator {
                 group: group,
                 iconBaseURL: services.environmentService.iconsURL,
                 vaultFilterType: filter
+            ),
+            vaultItemMoreOptionsHelper: DefaultVaultItemMoreOptionsHelper(
+                coordinator: asAnyCoordinator(),
+                services: services
             )
         )
         let store = Store(processor: processor)
@@ -213,6 +228,7 @@ final class VaultCoordinator: Coordinator, HasStackNavigator {
         )
         let viewController = UIHostingController(rootView: view)
         let searchController = UISearchController()
+        searchController.searchBar.placeholder = Localizations.search
         searchController.searchResultsUpdater = searchHandler
 
         stackNavigator?.push(
@@ -230,6 +246,10 @@ final class VaultCoordinator: Coordinator, HasStackNavigator {
             services: services,
             state: VaultListState(
                 iconBaseURL: services.environmentService.iconsURL
+            ),
+            vaultItemMoreOptionsHelper: DefaultVaultItemMoreOptionsHelper(
+                coordinator: asAnyCoordinator(),
+                services: services
             )
         )
         let store = Store(processor: processor)
@@ -258,6 +278,13 @@ final class VaultCoordinator: Coordinator, HasStackNavigator {
     /// - Parameter otpAuthModel: The parsed OTP data to search for matching ciphers.
     ///
     func showVaultItemSelection(otpAuthModel: OTPAuthModel) {
+        let userVerificationHelper = DefaultUserVerificationHelper(
+            authRepository: services.authRepository,
+            errorReporter: services.errorReporter,
+            localAuthService: services.localAuthService
+        )
+        userVerificationHelper.userVerificationDelegate = self
+
         let processor = VaultItemSelectionProcessor(
             coordinator: asAnyCoordinator(),
             services: services,
@@ -265,11 +292,13 @@ final class VaultCoordinator: Coordinator, HasStackNavigator {
                 iconBaseURL: services.environmentService.iconsURL,
                 otpAuthModel: otpAuthModel
             ),
-            userVerificationHelper: DefaultUserVerificationHelper(
-                userVerificationDelegate: self,
+            userVerificationHelper: userVerificationHelper,
+            vaultItemMoreOptionsHelper: DefaultVaultItemMoreOptionsHelper(
+                coordinator: asAnyCoordinator(),
                 services: services
             )
         )
+
         let view = VaultItemSelectionView(store: Store(processor: processor))
         let viewController = UIHostingController(rootView: view)
         stackNavigator?.present(UINavigationController(rootViewController: viewController))

@@ -5,6 +5,18 @@ import XCTest
 class ViewItemActionTests: BitwardenTestCase {
     // MARK: Tests
 
+    /// `eventOnCopy` returns the event to collect for the field.
+    func test_eventOnCopy() {
+        XCTAssertNil(CopyableField.cardNumber.eventOnCopy)
+        XCTAssertEqual(CopyableField.customHiddenField.eventOnCopy, .cipherClientCopiedHiddenField)
+        XCTAssertNil(CopyableField.customTextField.eventOnCopy)
+        XCTAssertEqual(CopyableField.password.eventOnCopy, .cipherClientCopiedPassword)
+        XCTAssertEqual(CopyableField.securityCode.eventOnCopy, .cipherClientCopiedCardCode)
+        XCTAssertNil(CopyableField.totp.eventOnCopy)
+        XCTAssertNil(CopyableField.uri.eventOnCopy)
+        XCTAssertNil(CopyableField.username.eventOnCopy)
+    }
+
     /// `requiresMasterPasswordReprompt` returns whether the user's master password needs to be
     /// entered again before performing the action if master password reprompt is enabled.
     func test_requiresMasterPasswordReprompt() {
@@ -26,7 +38,7 @@ class ViewItemActionTests: BitwardenTestCase {
 
         XCTAssertFalse(ViewItemAction.dismissPressed.requiresMasterPasswordReprompt)
 
-        XCTAssertFalse(ViewItemAction.downloadAttachment(.fixture()).requiresMasterPasswordReprompt)
+        XCTAssertTrue(ViewItemAction.downloadAttachment(.fixture()).requiresMasterPasswordReprompt)
 
         XCTAssertTrue(ViewItemAction.editPressed.requiresMasterPasswordReprompt)
 

@@ -49,6 +49,10 @@ protocol StateService: AnyObject {
     ///
     func getAccountEncryptionKeys(userId: String?) async throws -> AccountEncryptionKeys
 
+    /// Gets whether the user has unlocked their account in the current session interactively.
+    /// - Parameter userId: The user ID of the account. Defaults to the active account if `nil`.
+    func getAccountHasBeenUnlockedInteractively(userId: String?) async throws -> Bool
+
     /// Gets all accounts.
     ///
     /// - Returns: The known user accounts.
@@ -150,6 +154,14 @@ protocol StateService: AnyObject {
     /// - Returns: The user's environment URLs.
     ///
     func getEnvironmentUrls(userId: String?) async throws -> EnvironmentUrlData?
+
+    /// Gets the events stored to disk to be uploaded in the future.
+    ///
+    /// - Parameters:
+    ///   - userId: The user ID associated with the events.
+    /// - Returns: The events for the user
+    ///
+    func getEvents(userId: String?) async throws -> [EventData]
 
     /// Gets the user's last active time within the app.
     /// This value is set when the app is backgrounded.
@@ -304,6 +316,12 @@ protocol StateService: AnyObject {
     ///
     func setAccountEncryptionKeys(_ encryptionKeys: AccountEncryptionKeys, userId: String?) async throws
 
+    /// Sets whether the user has unlocked their account in the current session  interactively.
+    /// - Parameters:
+    ///   - userId: The user ID of the account. Defaults to the active account if `nil`.
+    ///   - value: Whether the user has unlocked their account in the current session.
+    func setAccountHasBeenUnlockedInteractively(userId: String?, value: Bool) async throws
+
     /// Sets the active account.
     ///
     /// - Parameter userId: The user Id of the account to set as active.
@@ -375,6 +393,14 @@ protocol StateService: AnyObject {
     ///   - userId: The user ID of the account. Defaults to the active account if `nil`.
     ///
     func setDisableAutoTotpCopy(_ disableAutoTotpCopy: Bool, userId: String?) async throws
+
+    /// Sets the events saved to disk for future upload.
+    ///
+    /// - Parameters:
+    ///   - events: The events to save.
+    ///   - userId: The user ID of the account. Defaults to the active account if `nil`.
+    ///
+    func setEvents(_ events: [EventData], userId: String?) async throws
 
     /// Sets the force password reset reason for an account.
     ///
@@ -575,6 +601,11 @@ extension StateService {
     ///
     func getAccountEncryptionKeys() async throws -> AccountEncryptionKeys {
         try await getAccountEncryptionKeys(userId: nil)
+    }
+
+    /// Gets whether the user has unlocked their account in the current session  interactively.
+    func getAccountHasBeenUnlockedInteractively() async throws -> Bool {
+        try await getAccountHasBeenUnlockedInteractively(userId: nil)
     }
 
     /// Gets either a valid account id or the active account id.
@@ -786,6 +817,12 @@ extension StateService {
     ///
     func setAccountEncryptionKeys(_ encryptionKeys: AccountEncryptionKeys) async throws {
         try await setAccountEncryptionKeys(encryptionKeys, userId: nil)
+    }
+
+    /// Sets whether the user has unlocked their account in the current session  interactively.
+    /// - Parameter value: Whether the user has unlocked their account in the current session
+    func setAccountHasBeenUnlockedInteractively(value: Bool) async throws {
+        try await setAccountHasBeenUnlockedInteractively(userId: nil, value: value)
     }
 
     /// Sets the allow sync on refresh value for the active account.
@@ -1014,7 +1051,7 @@ actor DefaultStateService: StateService { // swiftlint:disable:this type_body_le
 
     func clearPins() async throws {
         let userId = try getActiveAccountUserId()
-        accountVolatileData.removeValue(forKey: userId)
+        accountVolatileData[userId]?.pinProtectedUserKey = nil
         appSettingsStore.setEncryptedPin(nil, userId: userId)
         appSettingsStore.setPinProtectedUserKey(key: nil, userId: userId)
     }
@@ -1057,6 +1094,11 @@ actor DefaultStateService: StateService { // swiftlint:disable:this type_body_le
             encryptedPrivateKey: encryptedPrivateKey,
             encryptedUserKey: appSettingsStore.encryptedUserKey(userId: userId)
         )
+    }
+
+    func getAccountHasBeenUnlockedInteractively(userId: String?) async throws -> Bool {
+        let userId = try userId ?? getActiveAccountUserId()
+        return accountVolatileData[userId]?.hasBeenUnlockedInteractively == true
     }
 
     func getAccounts() throws -> [Account] {
@@ -1114,6 +1156,11 @@ actor DefaultStateService: StateService { // swiftlint:disable:this type_body_le
     func getEnvironmentUrls(userId: String?) async throws -> EnvironmentUrlData? {
         let userId = try userId ?? getActiveAccountUserId()
         return appSettingsStore.state?.accounts[userId]?.settings.environmentUrls
+    }
+
+    func getEvents(userId: String?) async throws -> [EventData] {
+        let userId = try userId ?? getActiveAccountUserId()
+        return appSettingsStore.events(userId: userId)
     }
 
     func getLastActiveTime(userId: String?) async throws -> Date? {
@@ -1248,6 +1295,14 @@ actor DefaultStateService: StateService { // swiftlint:disable:this type_body_le
         appSettingsStore.setEncryptedUserKey(key: encryptionKeys.encryptedUserKey, userId: userId)
     }
 
+    func setAccountHasBeenUnlockedInteractively(userId: String?, value: Bool) async throws {
+        let userId = try userId ?? getActiveAccountUserId()
+        accountVolatileData[
+            userId,
+            default: AccountVolatileData()
+        ].hasBeenUnlockedInteractively = value
+    }
+
     func setActiveAccount(userId: String) async throws {
         guard var state = appSettingsStore.state else { return }
         defer { appSettingsStore.state = state }
@@ -1295,6 +1350,11 @@ actor DefaultStateService: StateService { // swiftlint:disable:this type_body_le
     func setDisableAutoTotpCopy(_ disableAutoTotpCopy: Bool, userId: String?) async throws {
         let userId = try userId ?? getActiveAccountUserId()
         appSettingsStore.setDisableAutoTotpCopy(disableAutoTotpCopy, userId: userId)
+    }
+
+    func setEvents(_ events: [EventData], userId: String?) async throws {
+        let userId = try userId ?? getActiveAccountUserId()
+        appSettingsStore.setEvents(events, userId: userId)
     }
 
     func setForcePasswordResetReason(_ reason: ForcePasswordResetReason?, userId: String?) async throws {
@@ -1487,7 +1547,10 @@ actor DefaultStateService: StateService { // swiftlint:disable:this type_body_le
 ///
 struct AccountVolatileData {
     /// The pin protected user key.
-    var pinProtectedUserKey: String = ""
+    var pinProtectedUserKey: String?
+
+    /// Whether the account has been unlocked with user interaction.
+    var hasBeenUnlockedInteractively = false
 }
 
 // MARK: Biometrics

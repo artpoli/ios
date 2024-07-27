@@ -5,9 +5,11 @@ typealias Services = HasAPIService
     & HasAccountAPIService
     & HasAppIdService
     & HasAppSettingsStore
+    & HasApplication
     & HasAuthAPIService
     & HasAuthRepository
     & HasAuthService
+    & HasAutofillCredentialService
     & HasBiometricsRepository
     & HasCameraService
     & HasCaptchaService
@@ -16,7 +18,10 @@ typealias Services = HasAPIService
     & HasDeviceAPIService
     & HasEnvironmentService
     & HasErrorReporter
+    & HasEventService
     & HasExportVaultService
+    & HasFido2CredentialStore
+    & HasFido2UserInterfaceHelper
     & HasFileAPIService
     & HasGeneratorRepository
     & HasLocalAuthService
@@ -66,6 +71,13 @@ protocol HasAppSettingsStore {
     var appSettingsStore: AppSettingsStore { get }
 }
 
+/// Protocol for an object that provides an `Application`.
+///
+protocol HasApplication {
+    /// The application instance, if the app isn't running in an extension.
+    var application: Application? { get }
+}
+
 /// Protocol for an object that provides an `AuthAPIService`.
 ///
 protocol HasAuthAPIService {
@@ -85,6 +97,13 @@ protocol HasAuthRepository {
 protocol HasAuthService {
     /// The service used by the application to handle authentication tasks.
     var authService: AuthService { get }
+}
+
+/// Protocol for an object that provides an `AutofillCredentialService`.
+///
+protocol HasAutofillCredentialService {
+    /// /// The service which manages the ciphers exposed to the system for AutoFill suggestions..
+    var autofillCredentialService: AutofillCredentialService { get }
 }
 
 /// Protocol for obtaining the device's biometric authentication type.
@@ -143,11 +162,33 @@ protocol HasErrorReporter {
     var errorReporter: ErrorReporter { get }
 }
 
+/// Protocol for an object that provides an `EventService`.
+///
+protocol HasEventService {
+    /// The service used by the application to record events.
+    var eventService: EventService { get }
+}
+
 /// Protocol for an object that provides a `ExportVaultService`.
 ///
 protocol HasExportVaultService {
     /// The service used by the application to handle vault export tasks.
     var exportVaultService: ExportVaultService { get }
+}
+
+/// Protocol for an object that provides a `Fido2CredentialStore`.
+///
+protocol HasFido2CredentialStore {
+    /// A store to be used on Fido2 flows to get/save credentials.
+    var fido2CredentialStore: Fido2CredentialStore { get }
+}
+
+/// Protocol for an object that provides a `Fido2UserInterfaceHelper`.
+///
+protocol HasFido2UserInterfaceHelper {
+    /// A helper to be used on Fido2 flows that requires user interaction and extends the capabilities
+    /// of the `Fido2UserInterface` from the SDK.
+    var fido2UserInterfaceHelper: Fido2UserInterfaceHelper { get }
 }
 
 /// Protocol for an object that provides a `FileAPIService`.

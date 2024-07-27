@@ -14,13 +14,16 @@ final class VaultListProcessor: StateProcessor<
 > {
     // MARK: Types
 
-    typealias Services = HasAuthRepository
+    typealias Services = HasApplication
+        & HasAuthRepository
         & HasAuthService
         & HasErrorReporter
+        & HasEventService
         & HasNotificationService
         & HasPasteboardService
         & HasPolicyService
         & HasStateService
+        & HasTimeProvider
         & HasVaultRepository
 
     // MARK: Private Properties
@@ -36,6 +39,9 @@ final class VaultListProcessor: StateProcessor<
     /// from appearing at the same time.
     private var isShowingNotificationPermissions = false
 
+    /// The helper to handle the more options menu for a vault item.
+    private let vaultItemMoreOptionsHelper: VaultItemMoreOptionsHelper
+
     // MARK: Initialization
 
     /// Creates a new `VaultListProcessor`.
@@ -44,14 +50,17 @@ final class VaultListProcessor: StateProcessor<
     ///   - coordinator: The `Coordinator` that handles navigation.
     ///   - services: The services used by this processor.
     ///   - state: The initial state of the processor.
+    ///   - vaultItemMoreOptionsHelper: The helper to handle the more options menu for a vault item.
     ///
     init(
         coordinator: AnyCoordinator<VaultRoute, AuthAction>,
         services: Services,
-        state: VaultListState
+        state: VaultListState,
+        vaultItemMoreOptionsHelper: VaultItemMoreOptionsHelper
     ) {
         self.coordinator = coordinator
         self.services = services
+        self.vaultItemMoreOptionsHelper = vaultItemMoreOptionsHelper
         super.init(state: state)
     }
 
@@ -61,14 +70,22 @@ final class VaultListProcessor: StateProcessor<
         switch effect {
         case .appeared:
             await refreshVault(isManualRefresh: false)
-            await requestNotificationPermissions()
+            await handleNotifications()
             await checkPendingLoginRequests()
             await checkPersonalOwnershipPolicy()
             if !isShowingNotificationPermissions {
                 await checkUnassignedCiphers()
             }
         case let .morePressed(item):
-            await showMoreOptionsAlert(for: item)
+            await vaultItemMoreOptionsHelper.showMoreOptionsAlert(
+                for: item,
+                handleDisplayToast: { [weak self] toast in
+                    self?.state.toast = toast
+                },
+                handleOpenURL: { [weak self] url in
+                    self?.state.url = url
+                }
+            )
         case let .profileSwitcher(profileEffect):
             await handleProfileSwitcherEffect(profileEffect)
         case .refreshAccountProfiles:
@@ -182,22 +199,15 @@ extension VaultListProcessor {
         })
     }
 
-    /// Generates and copies a TOTP code for the cipher's TOTP key.
-    ///
-    /// - Parameter totpKey: The TOTP key used to generate a TOTP code.
-    ///
-    private func generateAndCopyTotpCode(totpKey: TOTPKeyModel) async {
-        do {
-            let response = try await services.vaultRepository.refreshTOTPCode(for: totpKey)
-            if let code = response.codeModel?.code {
-                services.pasteboardService.copy(code)
-                state.toast = Toast(text: Localizations.valueHasBeenCopied(Localizations.verificationCodeTotp))
-            } else {
-                coordinator.showAlert(.defaultAlert(title: Localizations.anErrorHasOccurred))
-            }
-        } catch {
-            coordinator.showAlert(.defaultAlert(title: Localizations.anErrorHasOccurred))
-            services.errorReporter.log(error: error)
+    /// Entry point to handling things around push notifications.
+    private func handleNotifications() async {
+        switch await services.notificationService.notificationAuthorization() {
+        case .authorized:
+            await registerForNotifications()
+        case .notDetermined:
+            await requestNotificationPermissions()
+        default:
+            break
         }
     }
 
@@ -220,20 +230,33 @@ extension VaultListProcessor {
         }
     }
 
-    /// Request permission to send push notifications if the user hasn't granted or denied permissions before.
-    private func requestNotificationPermissions() async {
-        // Don't do anything if the user has already responded to the permission request.
-        let notificationAuthorization = await services.notificationService.notificationAuthorization()
-        guard notificationAuthorization == .notDetermined else { return }
+    /// Attempts to register the device for push notifications.
+    /// We only need to register once a day.
+    private func registerForNotifications() async {
+        do {
+            let lastReg = try await services.stateService.getNotificationsLastRegistrationDate() ?? Date.distantPast
+            if services.timeProvider.timeSince(lastReg) >= 86400 { // One day
+                services.application?.registerForRemoteNotifications()
+                try await services.stateService.setNotificationsLastRegistrationDate(services.timeProvider.presentTime)
+            }
+        } catch {
+            services.errorReporter.log(error: error)
+        }
+    }
 
+    /// Request permission to send push notifications.
+    private func requestNotificationPermissions() async {
         isShowingNotificationPermissions = true
 
         // Show the explanation alert before asking for permissions.
         coordinator.showAlert(
             .pushNotificationsInformation { [services] in
                 do {
-                    _ = try await services.notificationService
+                    let authorized = try await services.notificationService
                         .requestAuthorization(options: [.alert, .sound, .badge])
+                    if authorized {
+                        await self.registerForNotifications()
+                    }
                 } catch {
                     self.services.errorReporter.log(error: error)
                 }
@@ -312,94 +335,6 @@ extension VaultListProcessor {
             services.errorReporter.log(error: error)
         }
     }
-
-    /// Show the more options alert for the selected item.
-    ///
-    /// - Parameter item: The selected item to show the options for.
-    ///
-    private func showMoreOptionsAlert(for item: VaultListItem) async {
-        do {
-            // Only ciphers have more options.
-            guard case let .cipher(cipherView, _) = item.itemType else { return }
-
-            let hasPremium = await (try? services.vaultRepository.doesActiveAccountHavePremium()) ?? false
-            let hasMasterPassword = try await services.stateService.getUserHasMasterPassword()
-
-            coordinator.showAlert(.moreOptions(
-                canCopyTotp: hasPremium || cipherView.organizationUseTotp,
-                cipherView: cipherView,
-                hasMasterPassword: hasMasterPassword,
-                id: item.id,
-                showEdit: true,
-                action: handleMoreOptionsAction
-            ))
-        } catch {
-            services.errorReporter.log(error: error)
-        }
-    }
-
-    /// Handle the result of the selected option on the More Options alert..
-    ///
-    /// - Parameter action: The selected action.
-    ///
-    private func handleMoreOptionsAction(_ action: MoreOptionsAction) async {
-        switch action {
-        case let .copy(toast, value, requiresMasterPasswordReprompt):
-            if requiresMasterPasswordReprompt {
-                presentMasterPasswordRepromptAlert {
-                    self.services.pasteboardService.copy(value)
-                    self.state.toast = Toast(text: Localizations.valueHasBeenCopied(toast))
-                }
-            } else {
-                services.pasteboardService.copy(value)
-                state.toast = Toast(text: Localizations.valueHasBeenCopied(toast))
-            }
-        case let .copyTotp(totpKey, requiresMasterPasswordReprompt):
-            if requiresMasterPasswordReprompt {
-                presentMasterPasswordRepromptAlert {
-                    await self.generateAndCopyTotpCode(totpKey: totpKey)
-                }
-            } else {
-                await generateAndCopyTotpCode(totpKey: totpKey)
-            }
-        case let .edit(cipherView, requiresMasterPasswordReprompt):
-            if requiresMasterPasswordReprompt {
-                presentMasterPasswordRepromptAlert {
-                    self.coordinator.navigate(to: .editItem(cipherView), context: self)
-                }
-            } else {
-                coordinator.navigate(to: .editItem(cipherView), context: self)
-            }
-        case let .launch(url):
-            state.url = url.sanitized
-        case let .view(id):
-            coordinator.navigate(to: .viewItem(id: id))
-        }
-    }
-
-    /// Presents the master password reprompt alert and calls the completion handler when the user's
-    /// master password has been confirmed.
-    ///
-    /// - Parameter completion: A completion handler that is called when the user's master password
-    ///     has been confirmed.
-    ///
-    private func presentMasterPasswordRepromptAlert(completion: @escaping () async -> Void) {
-        let alert = Alert.masterPasswordPrompt { [weak self] password in
-            guard let self else { return }
-
-            do {
-                let isValid = try await services.authRepository.validatePassword(password)
-                guard isValid else {
-                    coordinator.showAlert(.defaultAlert(title: Localizations.invalidMasterPassword))
-                    return
-                }
-                await completion()
-            } catch {
-                services.errorReporter.log(error: error)
-            }
-        }
-        coordinator.showAlert(alert)
-    }
 }
 
 // MARK: - CipherItemOperationDelegate
@@ -423,7 +358,13 @@ extension VaultListProcessor: CipherItemOperationDelegate {
 /// The actions available from the More Options alert.
 enum MoreOptionsAction: Equatable {
     /// Copy the `value` and show a toast with the `toast` string.
-    case copy(toast: String, value: String, requiresMasterPasswordReprompt: Bool)
+    case copy(
+        toast: String,
+        value: String,
+        requiresMasterPasswordReprompt: Bool,
+        logEvent: EventType?,
+        cipherId: String?
+    )
 
     /// Generate and copy the TOTP code for the given `totpKey`.
     case copyTotp(totpKey: TOTPKeyModel, requiresMasterPasswordReprompt: Bool)

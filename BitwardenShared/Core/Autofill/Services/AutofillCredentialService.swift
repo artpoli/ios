@@ -2,6 +2,14 @@ import AuthenticationServices
 import BitwardenSdk
 import OSLog
 
+// swiftlint:disable file_length
+
+/// A delegate to handle autofill credential service operations.
+protocol AutofillCredentialServiceDelegate: AnyObject {
+    /// Attempts to unlock the user's vault with the stored neverlock key
+    func unlockVaultWithNeverlockKey() async throws
+}
+
 /// A service which manages the ciphers exposed to the system for AutoFill suggestions.
 ///
 protocol AutofillCredentialService: AnyObject {
@@ -10,12 +18,41 @@ protocol AutofillCredentialService: AnyObject {
     ///
     /// - Parameters:
     ///   - id: The identifier of the user-requested credential to return.
+    ///   - autofillCredentialServiceDelegate: Delegate for autofill credential operations.
     ///   - repromptPasswordValidated: `true` if master password reprompt was required for the
     ///     cipher and the user's master password was validated.
     /// - Returns: A `ASPasswordCredential` that matches the user-requested credential which can be
     ///     used for autofill.
     ///
-    func provideCredential(for id: String, repromptPasswordValidated: Bool) async throws -> ASPasswordCredential
+    func provideCredential(
+        for id: String,
+        autofillCredentialServiceDelegate: AutofillCredentialServiceDelegate,
+        repromptPasswordValidated: Bool
+    ) async throws -> ASPasswordCredential
+
+    /// Provides a Fido2 credential for a passkey request
+    /// - Parameters:
+    ///   - passkeyRequest: Request to get the credential.
+    ///   - autofillCredentialServiceDelegate: Delegate for autofill credential operations.
+    ///   - fido2UserInterfaceHelperDelegate: Delegate for Fido2 user interface interaction.
+    /// - Returns: The passkey credential for assertion.
+    @available(iOS 17.0, *)
+    func provideFido2Credential(
+        for passkeyRequest: ASPasskeyCredentialRequest,
+        autofillCredentialServiceDelegate: AutofillCredentialServiceDelegate,
+        fido2UserInterfaceHelperDelegate: Fido2UserInterfaceHelperDelegate
+    ) async throws -> ASPasskeyAssertionCredential
+
+    /// Provides a Fido2 credential for Fido2 request parameters.
+    /// - Parameters:
+    ///   - fido2RequestParameters: The Fido2 request parameters to ge the assertion credential.
+    ///   - fido2UserInterfaceHelperDelegate: Delegate for Fido2 user interface interaction
+    /// - Returns: The passkey credential for assertion
+    @available(iOS 17.0, *)
+    func provideFido2Credential(
+        for fido2RequestParameters: PasskeyCredentialRequestParameters,
+        fido2UserInterfaceHelperDelegate: Fido2UserInterfaceHelperDelegate
+    ) async throws -> ASPasskeyAssertionCredential
 }
 
 /// A default implementation of an `AutofillCredentialService`.
@@ -31,6 +68,16 @@ class DefaultAutofillCredentialService {
 
     /// The service used by the application to report non-fatal errors.
     private let errorReporter: ErrorReporter
+
+    /// The service to manage events.
+    private let eventService: EventService
+
+    /// A store to be used on Fido2 flows to get/save credentials.
+    let fido2CredentialStore: Fido2CredentialStore
+
+    /// A helper to be used on Fido2 flows that requires user interaction and extends the capabilities
+    /// of the `Fido2UserInterface` from the SDK.
+    let fido2UserInterfaceHelper: Fido2UserInterfaceHelper
 
     /// The service used to manage the credentials available for AutoFill suggestions.
     private let identityStore: CredentialIdentityStore
@@ -56,6 +103,10 @@ class DefaultAutofillCredentialService {
     ///   - cipherService: The service used to manage syncing and updates to the user's ciphers.
     ///   - clientService: The service that handles common client functionality such as encryption and decryption.
     ///   - errorReporter: The service used by the application to report non-fatal errors.
+    ///   - eventService: The service to manage events.
+    ///   - fido2UserInterfaceHelper: A helper to be used on Fido2 flows that requires user interaction
+    ///   and extends the capabilities of the `Fido2UserInterface` from the SDK.
+    ///   - fido2CredentialStore: A store to be used on Fido2 flows to get/save credentials.
     ///   - identityStore: The service used to manage the credentials available for AutoFill suggestions.
     ///   - pasteboardService: The service used to manage copy/pasting from the device's clipboard.
     ///   - stateService: The service used by the application to manage account state.
@@ -65,6 +116,9 @@ class DefaultAutofillCredentialService {
         cipherService: CipherService,
         clientService: ClientService,
         errorReporter: ErrorReporter,
+        eventService: EventService,
+        fido2CredentialStore: Fido2CredentialStore,
+        fido2UserInterfaceHelper: Fido2UserInterfaceHelper,
         identityStore: CredentialIdentityStore = ASCredentialIdentityStore.shared,
         pasteboardService: PasteboardService,
         stateService: StateService,
@@ -73,6 +127,9 @@ class DefaultAutofillCredentialService {
         self.cipherService = cipherService
         self.clientService = clientService
         self.errorReporter = errorReporter
+        self.eventService = eventService
+        self.fido2CredentialStore = fido2CredentialStore
+        self.fido2UserInterfaceHelper = fido2UserInterfaceHelper
         self.identityStore = identityStore
         self.pasteboardService = pasteboardService
         self.stateService = stateService
@@ -145,7 +202,15 @@ class DefaultAutofillCredentialService {
 
             if #available(iOS 17, *) {
                 let identities = decryptedCiphers.compactMap(\.credentialIdentity)
-                try await identityStore.replaceCredentialIdentities(identities)
+                let fido2Identities = try await clientService.platform().fido2()
+                    .authenticator(
+                        userInterface: fido2UserInterfaceHelper,
+                        credentialStore: fido2CredentialStore
+                    )
+                    .credentialsForAutofill()
+                    .compactMap { $0.toFido2CredentialIdentity() }
+
+                try await identityStore.replaceCredentialIdentities(identities + fido2Identities)
                 Logger.application.info("AutofillCredentialService: replaced \(identities.count) credential identities")
             } else {
                 let identities = decryptedCiphers.compactMap(\.passwordCredentialIdentity)
@@ -156,10 +221,28 @@ class DefaultAutofillCredentialService {
             errorReporter.log(error: error)
         }
     }
+
+    /// Attempts to unlock the user's vault if it can be done without user interaction (e.g. if
+    /// the user uses never lock).
+    ///
+    /// - Parameter delegate: The delegate used for autofill credential operations.
+    ///
+    private func tryUnlockVaultWithoutUserInteraction(delegate: AutofillCredentialServiceDelegate) async throws {
+        let userId = try await stateService.getActiveAccountId()
+        let isLocked = vaultTimeoutService.isLocked(userId: userId)
+        let vaultTimeout = try? await vaultTimeoutService.sessionTimeoutValue(userId: nil)
+        guard vaultTimeout == .never, isLocked else { return }
+        try await delegate.unlockVaultWithNeverlockKey()
+    }
 }
 
 extension DefaultAutofillCredentialService: AutofillCredentialService {
-    func provideCredential(for id: String, repromptPasswordValidated: Bool) async throws -> ASPasswordCredential {
+    func provideCredential(
+        for id: String,
+        autofillCredentialServiceDelegate: AutofillCredentialServiceDelegate,
+        repromptPasswordValidated: Bool
+    ) async throws -> ASPasswordCredential {
+        try await tryUnlockVaultWithoutUserInteraction(delegate: autofillCredentialServiceDelegate)
         guard try await !vaultTimeoutService.isLocked(userId: stateService.getActiveAccountId()) else {
             throw ASExtensionError(.userInteractionRequired)
         }
@@ -190,7 +273,104 @@ extension DefaultAutofillCredentialService: AutofillCredentialService {
             pasteboardService.copy(codeModel.code)
         }
 
+        await eventService.collect(
+            eventType: .cipherClientAutofilled,
+            cipherId: cipher.id
+        )
+
         return ASPasswordCredential(user: username, password: password)
+    }
+
+    @available(iOS 17.0, *)
+    func provideFido2Credential(
+        for passkeyRequest: ASPasskeyCredentialRequest,
+        autofillCredentialServiceDelegate: AutofillCredentialServiceDelegate,
+        fido2UserInterfaceHelperDelegate: Fido2UserInterfaceHelperDelegate
+    ) async throws -> ASPasskeyAssertionCredential {
+        guard let credentialIdentity = passkeyRequest.credentialIdentity as? ASPasskeyCredentialIdentity else {
+            throw AppProcessorError.invalidOperation
+        }
+
+        try await tryUnlockVaultWithoutUserInteraction(delegate: autofillCredentialServiceDelegate)
+        guard try await !vaultTimeoutService.isLocked(userId: stateService.getActiveAccountId()) else {
+            throw Fido2Error.userInteractionRequired
+        }
+
+        let request = GetAssertionRequest(
+            passkeyRequest: passkeyRequest, credentialIdentity: credentialIdentity
+        )
+
+        return try await provideFido2Credential(
+            with: request,
+            fido2UserInterfaceHelperDelegate: fido2UserInterfaceHelperDelegate,
+            rpId: credentialIdentity.relyingPartyIdentifier,
+            clientDataHash: passkeyRequest.clientDataHash
+        )
+    }
+
+    @available(iOS 17.0, *)
+    func provideFido2Credential(
+        for fido2RequestParameters: PasskeyCredentialRequestParameters,
+        fido2UserInterfaceHelperDelegate: Fido2UserInterfaceHelperDelegate
+    ) async throws -> ASPasskeyAssertionCredential {
+        try await provideFido2Credential(
+            with: GetAssertionRequest(fido2RequestParameters: fido2RequestParameters),
+            fido2UserInterfaceHelperDelegate: fido2UserInterfaceHelperDelegate,
+            rpId: fido2RequestParameters.relyingPartyIdentifier,
+            clientDataHash: fido2RequestParameters.clientDataHash
+        )
+    }
+
+    // MARK: Private
+
+    /// Provides a Fido2 credential based for the given request.
+    /// - Parameters:
+    ///   - request: Request to get the assertion credential.
+    ///   - fido2UserInterfaceHelperDelegate: Delegate for Fido2 user interface interaction.
+    ///   - rpId: The relying party identifier of the request.
+    ///   - clientDataHash: The client data hash of the request.
+    /// - Returns: The passkey assertion credential for the request.
+    @available(iOS 17.0, *)
+    private func provideFido2Credential(
+        with request: GetAssertionRequest,
+        fido2UserInterfaceHelperDelegate: Fido2UserInterfaceHelperDelegate,
+        rpId: String,
+        clientDataHash: Data
+    ) async throws -> ASPasskeyAssertionCredential {
+        fido2UserInterfaceHelper.setupDelegate(
+            fido2UserInterfaceHelperDelegate: fido2UserInterfaceHelperDelegate
+        )
+
+        #if DEBUG
+        Fido2DebuggingReportBuilder.builder.withGetAssertionRequest(request)
+        #endif
+
+        do {
+            let assertionResult = try await clientService.platform().fido2()
+                .authenticator(
+                    userInterface: fido2UserInterfaceHelper,
+                    credentialStore: fido2CredentialStore
+                )
+                .getAssertion(request: request)
+
+            #if DEBUG
+            Fido2DebuggingReportBuilder.builder.withGetAssertionResult(.success(assertionResult))
+            #endif
+
+            return ASPasskeyAssertionCredential(
+                userHandle: assertionResult.userHandle,
+                relyingParty: rpId,
+                signature: assertionResult.signature,
+                clientDataHash: clientDataHash,
+                authenticatorData: assertionResult.authenticatorData,
+                credentialID: assertionResult.credentialId
+            )
+        } catch {
+            #if DEBUG
+            Fido2DebuggingReportBuilder.builder.withGetAssertionResult(.failure(error))
+            #endif
+            throw error
+        }
     }
 }
 
@@ -199,7 +379,10 @@ extension DefaultAutofillCredentialService: AutofillCredentialService {
 private extension CipherView {
     @available(iOS 17, *)
     var credentialIdentity: (any ASCredentialIdentity)? {
-        passwordCredentialIdentity
+        guard shouldGetPasswordCredentialIdentity else {
+            return nil
+        }
+        return passwordCredentialIdentity
     }
 
     var passwordCredentialIdentity: ASPasswordCredentialIdentity? {
@@ -216,6 +399,12 @@ private extension CipherView {
             user: username,
             recordIdentifier: id
         )
+    }
+
+    /// Whether the `ASPasswordCredentialIdentity` should be gotten.
+    /// Otherwise a passkey identity will be provided.
+    var shouldGetPasswordCredentialIdentity: Bool {
+        !hasFido2Credentials || login?.password != nil
     }
 }
 
