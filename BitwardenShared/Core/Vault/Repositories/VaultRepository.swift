@@ -27,6 +27,14 @@ public protocol VaultRepository: AnyObject {
     ///
     func addCipher(_ cipher: CipherView) async throws
 
+    /// Whether the vault filter can be shown to the user. It might not be shown to the user if the
+    /// policies are set up to disable personal vault ownership and only allow the user to be in a
+    /// single organization.
+    ///
+    /// - Returns: `true` if the vault filter can be shown.
+    ///
+    func canShowVaultFilter() async -> Bool
+
     /// Removes any temporarily downloaded attachments.
     func clearTemporaryDownloads()
 
@@ -322,6 +330,9 @@ class DefaultVaultRepository { // swiftlint:disable:this type_body_length
     /// The service used to manage syncing and updates to the user's organizations.
     private let organizationService: OrganizationService
 
+    /// The service for managing the polices for the user.
+    private let policyService: PolicyService
+
     /// The service used by the application to manage user settings.
     let settingsService: SettingsService
 
@@ -350,6 +361,7 @@ class DefaultVaultRepository { // swiftlint:disable:this type_body_length
     ///   - errorReporter: The service used by the application to report non-fatal errors.
     ///   - folderService: The service used to manage syncing and updates to the user's folders.
     ///   - organizationService: The service used to manage syncing and updates to the user's organizations.
+    ///   - policyService: The service for managing the polices for the user.
     ///   - settingsService: The service used by the application to manage user settings.
     ///   - stateService: The service used by the application to manage account state.
     ///   - syncService: The service used to handle syncing vault data with the API.
@@ -365,6 +377,7 @@ class DefaultVaultRepository { // swiftlint:disable:this type_body_length
         errorReporter: ErrorReporter,
         folderService: FolderService,
         organizationService: OrganizationService,
+        policyService: PolicyService,
         settingsService: SettingsService,
         stateService: StateService,
         syncService: SyncService,
@@ -379,6 +392,7 @@ class DefaultVaultRepository { // swiftlint:disable:this type_body_length
         self.errorReporter = errorReporter
         self.folderService = folderService
         self.organizationService = organizationService
+        self.policyService = policyService
         self.settingsService = settingsService
         self.stateService = stateService
         self.syncService = syncService
@@ -919,6 +933,12 @@ extension DefaultVaultRepository: VaultRepository {
         try await cipherService.addCipherWithServer(cipher)
     }
 
+    func canShowVaultFilter() async -> Bool {
+        let disablePersonalOwnership = await policyService.policyAppliesToUser(.personalOwnership)
+        let singleOrg = await policyService.policyAppliesToUser(.onlyOrg)
+        return !(disablePersonalOwnership && singleOrg)
+    }
+
     func clearTemporaryDownloads() {
         Task {
             do {
@@ -1355,6 +1375,15 @@ extension DefaultVaultRepository: VaultRepository {
         rpID: String?,
         searchText: String?
     ) async throws -> [VaultListSection] {
+        guard mode != .combinedSingleSection else {
+            guard !ciphers.isEmpty else {
+                return []
+            }
+
+            let section = try await createAutofillListCombinedSingleSection(from: ciphers)
+            return [section]
+        }
+
         var sections = [VaultListSection]()
         if #available(iOSApplicationExtension 17.0, *),
            let fido2Section = try await loadAutofillFido2Section(
@@ -1383,6 +1412,48 @@ extension DefaultVaultRepository: VaultRepository {
             )
         )
         return sections
+    }
+
+    /// Creates the single vault list section for passwords + Fido2 credentials.
+    /// - Parameter ciphers: Ciphers to load.
+    /// - Returns: The section to display passwords + Fido2 credentials.
+    private func createAutofillListCombinedSingleSection(
+        from ciphers: [CipherView]
+    ) async throws -> VaultListSection {
+        let vaultItems = try await ciphers
+            .asyncMap { cipher in
+                guard cipher.hasFido2Credentials else {
+                    return VaultListItem(cipherView: cipher)
+                }
+                return try await createFido2VaultListItem(from: cipher)
+            }
+            .compactMap { $0 }
+
+        return VaultListSection(
+            id: Localizations.chooseALoginToSaveThisPasskeyTo,
+            items: vaultItems,
+            name: Localizations.chooseALoginToSaveThisPasskeyTo
+        )
+    }
+
+    /// Creates a `VaultListItem` from a `CipherView` with Fido2 credentials.
+    /// - Parameter cipher: Cipher from which create the item.
+    /// - Returns: The `VaultListItem` with the cipher and Fido2 credentials.
+    func createFido2VaultListItem(from cipher: CipherView) async throws -> VaultListItem? {
+        let decryptedFido2Credentials = try await clientService
+            .platform()
+            .fido2()
+            .decryptFido2AutofillCredentials(cipherView: cipher)
+
+        guard let fido2CredentialAutofillView = decryptedFido2Credentials.first else {
+            errorReporter.log(error: Fido2Error.decryptFido2AutofillCredentialsEmpty)
+            return nil
+        }
+
+        return VaultListItem(
+            cipherView: cipher,
+            fido2CredentialAutofillView: fido2CredentialAutofillView
+        )
     }
 
     /// Gets the passwords vault list section name depending on the context.
@@ -1447,20 +1518,7 @@ extension DefaultVaultRepository: VaultRepository {
 
         let fido2ListItems: [VaultListItem?] = try await filteredFido2Credentials
             .asyncMap { cipher in
-                let decryptedFido2Credentials = try await self.clientService
-                    .platform()
-                    .fido2()
-                    .decryptFido2AutofillCredentials(cipherView: cipher)
-
-                guard let fido2CredentialAutofillView = decryptedFido2Credentials.first else {
-                    errorReporter.log(error: Fido2Error.decryptFido2AutofillCredentialsEmpty)
-                    return nil
-                }
-
-                return VaultListItem(
-                    cipherView: cipher,
-                    fido2CredentialAutofillView: fido2CredentialAutofillView
-                )
+                try await createFido2VaultListItem(from: cipher)
             }
 
         return VaultListSection(

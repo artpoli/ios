@@ -3,7 +3,7 @@ import XCTest
 
 @testable import BitwardenShared
 
-class VaultAutofillListProcessorTests: BitwardenTestCase {
+class VaultAutofillListProcessorTests: BitwardenTestCase { // swiftlint:disable:this type_body_length
     // MARK: Properties
 
     var appExtensionDelegate: MockAppExtensionDelegate!
@@ -13,6 +13,7 @@ class VaultAutofillListProcessorTests: BitwardenTestCase {
     var errorReporter: MockErrorReporter!
     var fido2CredentialStore: MockFido2CredentialStore!
     var fido2UserInterfaceHelper: MockFido2UserInterfaceHelper!
+    var stateService: MockStateService!
     var subject: VaultAutofillListProcessor!
     var vaultRepository: MockVaultRepository!
 
@@ -28,6 +29,7 @@ class VaultAutofillListProcessorTests: BitwardenTestCase {
         errorReporter = MockErrorReporter()
         fido2CredentialStore = MockFido2CredentialStore()
         fido2UserInterfaceHelper = MockFido2UserInterfaceHelper()
+        stateService = MockStateService()
         vaultRepository = MockVaultRepository()
 
         subject = VaultAutofillListProcessor(
@@ -39,6 +41,7 @@ class VaultAutofillListProcessorTests: BitwardenTestCase {
                 errorReporter: errorReporter,
                 fido2CredentialStore: fido2CredentialStore,
                 fido2UserInterfaceHelper: fido2UserInterfaceHelper,
+                stateService: stateService,
                 vaultRepository: vaultRepository
             ),
             state: VaultAutofillListState()
@@ -55,6 +58,7 @@ class VaultAutofillListProcessorTests: BitwardenTestCase {
         errorReporter = nil
         fido2CredentialStore = nil
         fido2UserInterfaceHelper = nil
+        stateService = nil
         subject = nil
         vaultRepository = nil
     }
@@ -247,9 +251,22 @@ class VaultAutofillListProcessorTests: BitwardenTestCase {
         XCTAssertEqual(errorReporter.errors.last as? BitwardenTestError, .example)
     }
 
+    /// `perform(_:)` with `.streamShowWebIcons` requests the value of the show
+    /// web icons parameter from the state service.
+    func test_perform_streamShowWebIcons() {
+        let task = Task {
+            await subject.perform(.streamShowWebIcons)
+        }
+
+        stateService.showWebIconsSubject.send(false)
+        waitFor(subject.state.showWebIcons == false)
+
+        task.cancel()
+    }
+
     /// `receive(_:)` with `.addTapped` navigates to the add item view.
     func test_receive_addTapped() {
-        subject.receive(.addTapped)
+        subject.receive(.addTapped(fromToolbar: false))
 
         XCTAssertEqual(
             coordinator.routes.last,
@@ -261,7 +278,26 @@ class VaultAutofillListProcessorTests: BitwardenTestCase {
     func test_receive_addTapped_hidesProfileSwitcher() {
         subject.state.profileSwitcherState.isVisible = true
 
-        subject.receive(.addTapped)
+        subject.receive(.addTapped(fromToolbar: false))
+
+        XCTAssertFalse(subject.state.profileSwitcherState.isVisible)
+    }
+
+    /// `receive(_:)` with `.addTapped` navigates to the add item view when adding from toolbar.
+    func test_receive_addTapped_fromToolbar() {
+        subject.receive(.addTapped(fromToolbar: true))
+
+        XCTAssertEqual(
+            coordinator.routes.last,
+            .addItem(allowTypeSelection: false, group: .login, newCipherOptions: NewCipherOptions())
+        )
+    }
+
+    /// `receive(_:)` with `.addTapped` hides the profile switcher if it's visible when adding from toolbar.
+    func test_receive_addTapped_hidesProfileSwitcher_fromToolbar() {
+        subject.state.profileSwitcherState.isVisible = true
+
+        subject.receive(.addTapped(fromToolbar: true))
 
         XCTAssertFalse(subject.state.profileSwitcherState.isVisible)
     }

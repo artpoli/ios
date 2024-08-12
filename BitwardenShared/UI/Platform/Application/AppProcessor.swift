@@ -4,6 +4,24 @@ import Combine
 import Foundation
 import UIKit
 
+// MARK: - AppLinksError
+
+/// The errors thrown from a `AppProcessor`.
+///
+enum AppProcessorError: Error {
+    /// The received URL from AppLinks is malformed.
+    case appLinksInvalidURL
+
+    /// The received URL from AppLinks does not have the correct parameters.
+    case appLinksInvalidParametersForPath
+
+    /// The received URL from AppLinks does not have a valid path.
+    case appLinksInvalidPath
+
+    /// The operation to execute is invalid.
+    case invalidOperation
+}
+
 /// The `AppProcessor` processes actions received at the application level and contains the logic
 /// to control the top-level flow through the app.
 ///
@@ -135,6 +153,44 @@ public class AppProcessor {
         } else {
             await coordinator.handleEvent(.didStart)
         }
+    }
+
+    /// Handle incoming URL from iOS AppLinks and redirect it to the correct navigation within the App
+    ///
+    /// - Parameter incomingURL: The URL handled from AppLinks.
+    ///
+    public func handleAppLinks(incomingURL: URL) {
+        guard let sanatizedUrl = URL(string: incomingURL.absoluteString.replacingOccurrences(of: "/#/", with: "/")),
+              let components = URLComponents(url: sanatizedUrl, resolvingAgainstBaseURL: true) else {
+            return
+        }
+
+        // Check for specific URL components that you need.
+        guard let params = components.queryItems,
+              let host = components.host else {
+            services.errorReporter.log(error: AppProcessorError.appLinksInvalidURL)
+            return
+        }
+
+        guard components.path == "/finish-signup" else {
+            services.errorReporter.log(error: AppProcessorError.appLinksInvalidPath)
+            return
+        }
+        guard let email = params.first(where: { $0.name == "email" })?.value,
+              let verificationToken = params.first(where: { $0.name == "token" })?.value,
+              let fromEmail = params.first(where: { $0.name == "fromEmail" })?.value
+        else {
+            services.errorReporter.log(error: AppProcessorError.appLinksInvalidParametersForPath)
+            return
+        }
+
+        coordinator?.navigate(to: AppRoute.auth(
+            AuthRoute.completeRegistrationFromAppLink(
+                emailVerificationToken: verificationToken,
+                userEmail: email,
+                fromEmail: Bool(fromEmail) ?? true,
+                region: host.contains(RegionType.europe.baseUrlDescription) ? .europe : .unitedStates
+            )))
     }
 
     // MARK: Autofill Methods
@@ -423,10 +479,22 @@ extension AppProcessor: Fido2UserInterfaceHelperDelegate {
     }
 
     func onNeedsUserInteraction() async throws {
-        if let fido2AppExtensionDelegate = appExtensionDelegate as? Fido2AppExtensionDelegate,
-           !fido2AppExtensionDelegate.flowWithUserInteraction {
+        guard let fido2AppExtensionDelegate = appExtensionDelegate as? Fido2AppExtensionDelegate else {
+            return
+        }
+
+        if !fido2AppExtensionDelegate.flowWithUserInteraction {
             fido2AppExtensionDelegate.setUserInteractionRequired()
             throw Fido2Error.userInteractionRequired
+        }
+
+        // WORKAROUND: We need to wait until the view controller appears in order to perform any
+        // action that needs user interaction or it might not show the prompt to the user.
+        // E.g. without this there are certain devices that don't show the FaceID prompt
+        // and the user only sees the screen dimming a bit and failing the flow.
+        for await didAppear in fido2AppExtensionDelegate.getDidAppearPublisher() {
+            guard didAppear else { continue }
+            return
         }
     }
 
@@ -439,10 +507,4 @@ extension AppProcessor: Fido2UserInterfaceHelperDelegate {
     }
 }
 
-// MARK: - AppProcessorError
-
-/// Errors that can happen inside the `AppProcessor`.
-enum AppProcessorError: Error {
-    /// The operation to execute is invalid.
-    case invalidOperation
-} // swiftlint:disable:this file_length
+// swiftlint:disable:this file_length

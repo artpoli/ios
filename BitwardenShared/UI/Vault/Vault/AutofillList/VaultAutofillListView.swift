@@ -29,6 +29,10 @@ struct VaultAutofillListView: View {
             prompt: Localizations.search
         )
         .toolbar {
+            cancelToolbarItem {
+                store.send(.cancelTapped)
+            }
+
             ToolbarItem(placement: .navigationBarLeading) {
                 ProfileSwitcherToolbarView(
                     store: store.child(
@@ -40,11 +44,7 @@ struct VaultAutofillListView: View {
             }
 
             addToolbarItem(hidden: store.state.isAutofillingFido2List) {
-                store.send(.addTapped)
-            }
-
-            cancelToolbarItem {
-                store.send(.cancelTapped)
+                store.send(.addTapped(fromToolbar: true))
             }
         }
     }
@@ -94,6 +94,9 @@ private struct VaultAutofillListSearchableView: View {
             .task {
                 await store.perform(.streamAutofillItems)
             }
+            .task {
+                await store.perform(.streamShowWebIcons)
+            }
             .task(id: store.state.searchText) {
                 await store.perform(.search(store.state.searchText))
             }
@@ -108,7 +111,7 @@ private struct VaultAutofillListSearchableView: View {
     /// A view for displaying a list of ciphers.
     @ViewBuilder
     private func cipherListView(_ sections: [VaultListSection]) -> some View {
-        if store.state.isAutofillingFido2List {
+        if store.state.isAutofillingFido2List || store.state.isCreatingFido2Credential {
             cipherCombinedListView(sections)
         } else {
             let items = sections.first?.items ?? []
@@ -121,7 +124,10 @@ private struct VaultAutofillListSearchableView: View {
     private func cipherCombinedListView(_ sections: [VaultListSection]) -> some View {
         LazyVStack(spacing: 16) {
             ForEach(sections) { section in
-                VaultListSectionView(section: section) { item in
+                VaultListSectionView(
+                    section: section,
+                    showCount: !store.state.isCreatingFido2Credential
+                ) { item in
                     AsyncButton {
                         await store.perform(.vaultItemTapped(item))
                     } label: {
@@ -192,10 +198,10 @@ private struct VaultAutofillListSearchableView: View {
                         EmptyView()
                     } else {
                         Button {
-                            store.send(.addTapped)
+                            store.send(.addTapped(fromToolbar: false))
                         } label: {
                             Label {
-                                Text(Localizations.newItem)
+                                Text(store.state.emptyViewButtonText)
                             } icon: {
                                 Asset.Images.plus.swiftUIImage
                                     .imageStyle(.accessoryIcon(

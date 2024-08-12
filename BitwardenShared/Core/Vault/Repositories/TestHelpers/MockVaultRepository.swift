@@ -10,6 +10,9 @@ class MockVaultRepository: VaultRepository {
     var addCipherCiphers = [CipherView]()
     var addCipherResult: Result<Void, Error> = .success(())
 
+    var canShowVaultFilter = true
+
+    var ciphersAutofillPublisherUriCalled: String?
     var ciphersSubject = CurrentValueSubject<[CipherListView], Error>([])
     var ciphersAutofillSubject = CurrentValueSubject<[BitwardenShared.VaultListSection], Error>([])
     var cipherDetailsSubject = CurrentValueSubject<CipherView?, Error>(.fixture())
@@ -112,6 +115,10 @@ class MockVaultRepository: VaultRepository {
         try addCipherResult.get()
     }
 
+    func canShowVaultFilter() async -> Bool {
+        canShowVaultFilter
+    }
+
     func cipherPublisher() async throws -> AsyncThrowingPublisher<AnyPublisher<[CipherListView], Error>> {
         ciphersSubject.eraseToAnyPublisher().values
     }
@@ -126,7 +133,8 @@ class MockVaultRepository: VaultRepository {
         rpID: String?,
         uri: String?
     ) async throws -> AsyncThrowingPublisher<AnyPublisher<[BitwardenShared.VaultListSection], Error>> {
-        ciphersAutofillSubject.eraseToAnyPublisher().values
+        ciphersAutofillPublisherUriCalled = uri
+        return ciphersAutofillSubject.eraseToAnyPublisher().values
     }
 
     func clearTemporaryDownloads() {

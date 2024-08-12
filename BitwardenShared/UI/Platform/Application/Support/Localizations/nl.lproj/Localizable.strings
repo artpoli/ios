@@ -479,8 +479,6 @@
 "CodeSent" = "Code verstuurd";
 "ConfirmYourIdentity" = "Bevestig je identiteit om door te gaan.";
 "ExportVaultWarning" = "Deze export bevat jouw kluisgegevens in een niet-versleutelde opmaak. Je moet het geëxporteerde bestand niet opslaan of verzenden over onbeveiligde kanalen (zoals e-mail). Verwijder het exportbestand direct na gebruik.";
-"EncExportKeyWarning" = "Deze export versleutelt je gegevens met de encryptiesleutel van je account. Als je je encryptiesleutel verandert moet je opnieuw exporteren, omdat je deze export dan niet meer kunt ontcijferen.";
-"EncExportAccountWarning" = "Encryptiesleutels zijn uniek voor elk Bitwarden-gebruikersaccount. Je kunt een versleutelde export dus niet in een ander account importeren.";
 "ExportVaultConfirmationTitle" = "Kluisexport bevestigen";
 "Warning" = "Waarschuwing";
 "ExportVaultFailure" = "Er ging iets mis met het exporteren van je kluis. Als het probleem aanhoudt, moet je exporteren via de webkluis.";
@@ -920,3 +918,12 @@
 "UnknownAccount" = "Onbekend account";
 "UserVerificationForPasskey" = "User verification for passkey";
 "NewItem" = "Nieuw item";
+"ExportVaultFilePwProtectInfo" = "Deze bestandsexport wordt met een wachtwoord beveiligd en vereist het bestandswachtwoord om te decoderen.";
+"IntroCarouselPage1Title" = "Security, geprioriteerd";
+"IntroCarouselPage1Message" = "Logins, kaarten en identiteiten in je beveiligde kluis opslaan. Bitwarden gebruikt zero-knowledge, end-to-end versleuteling om te beschermen wat belangrijk voor jou is.";
+"IntroCarouselPage2Title" = "Snel en eenvoudig inloggen";
+"IntroCarouselPage2Message" = "Biometrische ontgrendelen en automatisch invullen instellen zodat je kunt inloggen op je accounts zonder één letter te typen.";
+"IntroCarouselPage3Title" = "Versterk je logins";
+"IntroCarouselPage3Message" = "Gebruik de generator voor het aanmaken en bewaren van sterke, unieke wachtwoorden voor al je accounts.";
+"IntroCarouselPage4Title" = "Jouw gegevens, wanneer en waar je ze nodig hebt";
+"IntroCarouselPage4Message" = "Onbeperkt wachtwoorden opslaan op alle apparaten met Bitwarden-apps voor mobiel, browser en desktop.";

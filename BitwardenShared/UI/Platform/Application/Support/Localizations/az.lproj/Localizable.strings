@@ -479,8 +479,6 @@
 "CodeSent" = "Kod göndərildi!";
 "ConfirmYourIdentity" = "Davam etmək üçün kimliyinizi doğrulayın.";
 "ExportVaultWarning" = "Xaricə köçürdüyünüz bu fayldakı datanız şifrələnməmiş formatdadır. Bu faylı güvənli olmayan kanallar (e-poçt kimi) üzərində saxlamamalı və ya göndərməməlisiniz. İşiniz bitdikdən sonra faylı dərhal silin.";
-"EncExportKeyWarning" = "Xaricə köçürdüyünüz bu fayldakı data, hesabınızın şifrələmə açarı istifadə edilərək şifrələnir. Hesabınızın şifrələmə açarını dəyişdirsəniz, bu faylın şifrəsini aça bilməyəcəksiniz və onu yenidən xaricə köçürməli olacaqsınız.";
-"EncExportAccountWarning" = "Hesab şifrələmə açarları, hər Bitwarden istifadəçi hesabı üçün unikaldır, buna görə də şifrələnmiş bir xaricə köçürməni, fərqli bir hesaba köçürə bilməzsiniz.";
 "ExportVaultConfirmationTitle" = "Anbarın xaricə köçürülməsini təsdiqlə";
 "Warning" = "Xəbərdarlıq";
 "ExportVaultFailure" = "Anbarınızın xaricə köçürülməsi zamanı problem yarandı. Əgər problem davam edərsə, veb anbarından xaricə köçürməli olacaqsınız.";
@@ -920,3 +918,12 @@
 "UnknownAccount" = "Bilinməyən hesab";
 "UserVerificationForPasskey" = "Keçid açarı üçün istifadəçi doğrulaması";
 "NewItem" = "Yeni element";
+"ExportVaultFilePwProtectInfo" = "Bu faylın xaricə köçürülməsi, parolla qorunacaq və şifrəsini açmaq üçün fayl parolu tələb olunacaq.";
+"IntroCarouselPage1Title" = "Təhlükəsizlik, prioritet";
+"IntroCarouselPage1Message" = "Giriş, kart və kimlik məlumatlarınızı güvənli anbarınızda saxlayın. Bitwarden, sizin üçün mühüm olanları qorumaq üçün zero-knowledge və ucdan-uca şifrələmə istifadə edir.";
+"IntroCarouselPage2Title" = "Quick and easy login";
+"IntroCarouselPage2Message" = "Set up biometric unlock and autofill to log into your accounts without typing a single letter.";
+"IntroCarouselPage3Title" = "Level up your logins";
+"IntroCarouselPage3Message" = "Use the generator to create and save strong, unique passwords for all your accounts.";
+"IntroCarouselPage4Title" = "Your data, when and where you need it";
+"IntroCarouselPage4Message" = "Save unlimited passwords across unlimited devices with Bitwarden mobile, browser, and desktop apps.";

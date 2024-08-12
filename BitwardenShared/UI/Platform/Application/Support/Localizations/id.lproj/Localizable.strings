@@ -479,8 +479,6 @@
 "CodeSent" = "Kode Terkirim!";
 "ConfirmYourIdentity" = "Konfirmasi identitas Anda untuk melanjutkan.";
 "ExportVaultWarning" = "Ekspor ini berisi data vault Anda dalam format yang tidak dienkripsi. Anda tidak boleh menyimpan atau mengirim file yang diekspor melalui saluran yang tidak aman (seperti emel). Hapus segera setelah Anda selesai menggunakannya.";
-"EncExportKeyWarning" = "Ekspor ini mengenkripsi data Anda menggunakan kunci enkripsi akun Anda. Jika Anda pernah merotasi kunci enkripsi akun Anda, Anda harus mengekspor lagi karena Anda tidak akan dapat mendekripsi file ekspor ini.";
-"EncExportAccountWarning" = "Kunci enkripsi akun unik untuk setiap akun pengguna Bitwarden, jadi Anda tidak dapat mengimpor ekspor terenkripsi ke akun lain.";
 "ExportVaultConfirmationTitle" = "Konfirmasi Ekspor Vault";
 "Warning" = "Peringatan";
 "ExportVaultFailure" = "Terjadi masalah saat mengekspor vault Anda. Jika masalah terus berlanjut, Anda harus mengekspor dari brankas web.";
@@ -920,3 +918,12 @@
 "UnknownAccount" = "Unknown account";
 "UserVerificationForPasskey" = "User verification for passkey";
 "NewItem" = "New item";
+"ExportVaultFilePwProtectInfo" = "This file export will be password protected and require the file password to decrypt.";
+"IntroCarouselPage1Title" = "Security, prioritized";
+"IntroCarouselPage1Message" = "Save logins, cards, and identities to your secure vault. Bitwarden uses zero-knowledge, end-to-end encryption to protect what’s important to you.";
+"IntroCarouselPage2Title" = "Quick and easy login";
+"IntroCarouselPage2Message" = "Set up biometric unlock and autofill to log into your accounts without typing a single letter.";
+"IntroCarouselPage3Title" = "Level up your logins";
+"IntroCarouselPage3Message" = "Use the generator to create and save strong, unique passwords for all your accounts.";
+"IntroCarouselPage4Title" = "Your data, when and where you need it";
+"IntroCarouselPage4Message" = "Save unlimited passwords across unlimited devices with Bitwarden mobile, browser, and desktop apps.";
