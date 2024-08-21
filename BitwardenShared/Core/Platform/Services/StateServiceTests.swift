@@ -244,11 +244,18 @@ class StateServiceTests: BitwardenTestCase { // swiftlint:disable:this type_body
         )
     }
 
-    /// `getAccountEncryptionKeys(_:)` throws an error if applicable.
-    func test_getAccountEncryptionKeys_error() async throws {
+    /// `getAccountEncryptionKeys(_:)` throws an error if there's no active account.
+    func test_getAccountEncryptionKeys_noAccount() async throws {
+        await assertAsyncThrows(error: StateServiceError.noActiveAccount) {
+            _ = try await subject.getAccountEncryptionKeys()
+        }
+    }
+
+    /// `getAccountEncryptionKeys(_:)` throws an error if there's no private key.
+    func test_getAccountEncryptionKeys_noPrivateKey() async throws {
         await subject.addAccount(.fixture(profile: .fixture(userId: "1")))
 
-        await assertAsyncThrows(error: StateServiceError.noActiveAccount) {
+        await assertAsyncThrows(error: StateServiceError.noEncryptedPrivateKey) {
             _ = try await subject.getAccountEncryptionKeys()
         }
     }
@@ -697,22 +704,6 @@ class StateServiceTests: BitwardenTestCase { // swiftlint:disable:this type_body
         appSettingsStore.serverConfig["1"] = model
         let value = try await subject.getServerConfig()
         XCTAssertEqual(value, model)
-    }
-
-    /// `getShouldCheckOrganizationUnassignedItems` returns the config value
-    func test_getShouldCheckOrganizationUnassignedItems() async throws {
-        appSettingsStore.shouldCheckOrganizationUnassignedItems["1"] = false
-        var shouldCheck = try await subject.getShouldCheckOrganizationUnassignedItems(userId: "1")
-        XCTAssertFalse(shouldCheck)
-        appSettingsStore.shouldCheckOrganizationUnassignedItems["1"] = true
-        shouldCheck = try await subject.getShouldCheckOrganizationUnassignedItems(userId: "1")
-        XCTAssertTrue(shouldCheck)
-    }
-
-    /// `getShouldCheckOrganizationUnassignedItems` returns true if it hasn't been set
-    func test_getShouldCheckOrganizationUnassignedItems_notSet() async throws {
-        let shouldCheck = try await subject.getShouldCheckOrganizationUnassignedItems(userId: "1")
-        XCTAssertTrue(shouldCheck)
     }
 
     /// `getShowWebIcons` gets the show web icons value.
@@ -1525,12 +1516,6 @@ class StateServiceTests: BitwardenTestCase { // swiftlint:disable:this type_body
         )
         try await subject.setServerConfig(model)
         XCTAssertEqual(appSettingsStore.serverConfig["1"], model)
-    }
-
-    /// `setShouldCheckOrganizationUnassignedItems` saves the should check value.
-    func test_setShouldCheckOrganizationUnassignedItems() async throws {
-        try await subject.setShouldCheckOrganizationUnassignedItems(true, userId: "1")
-        XCTAssertEqual(appSettingsStore.shouldCheckOrganizationUnassignedItems["1"], true)
     }
 
     /// `setShouldTrustDevice` saves the should trust device value.

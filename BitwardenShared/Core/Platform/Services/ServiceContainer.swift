@@ -407,6 +407,13 @@ public class ServiceContainer: Services { // swiftlint:disable:this type_body_le
             stateService: stateService
         )
 
+        let keyConnectorService = DefaultKeyConnectorService(
+            accountAPIService: apiService,
+            clientService: clientService,
+            keyConnectorAPIService: apiService,
+            stateService: stateService
+        )
+
         let syncService = DefaultSyncService(
             accountAPIService: apiService,
             cipherService: cipherService,
@@ -421,8 +428,6 @@ public class ServiceContainer: Services { // swiftlint:disable:this type_body_le
             syncAPIService: apiService,
             timeProvider: timeProvider
         )
-
-        let totpService = DefaultTOTPService()
 
         let trustDeviceService = DefaultTrustDeviceService(
             appIdService: appIdService,
@@ -441,6 +446,12 @@ public class ServiceContainer: Services { // swiftlint:disable:this type_body_le
 
         let pasteboardService = DefaultPasteboardService(
             errorReporter: errorReporter,
+            stateService: stateService
+        )
+
+        let totpService = DefaultTOTPService(
+            clientService: clientService,
+            pasteboardService: pasteboardService,
             stateService: stateService
         )
 
@@ -465,6 +476,7 @@ public class ServiceContainer: Services { // swiftlint:disable:this type_body_le
             configService: configService,
             environmentService: environmentService,
             keychainService: keychainRepository,
+            keyConnectorService: keyConnectorService,
             organizationAPIService: apiService,
             organizationService: organizationService,
             organizationUserAPIService: apiService,
@@ -571,6 +583,7 @@ public class ServiceContainer: Services { // swiftlint:disable:this type_body_le
             fido2UserInterfaceHelper: fido2UserInterfaceHelper,
             pasteboardService: pasteboardService,
             stateService: stateService,
+            totpService: totpService,
             vaultTimeoutService: vaultTimeoutService
         )
 

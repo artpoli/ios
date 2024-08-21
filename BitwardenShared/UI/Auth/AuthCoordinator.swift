@@ -178,6 +178,8 @@ final class AuthCoordinator: NSObject, // swiftlint:disable:this type_body_lengt
             showLoginWithDevice(email: email, type: type, isAuthenticated: isAuthenticated)
         case let .masterPasswordHint(username):
             showMasterPasswordHint(for: username)
+        case let .removeMasterPassword(organizationName):
+            showRemoveMasterPassword(organizationName: organizationName)
         case let .selfHosted(region):
             showSelfHostedView(delegate: context as? SelfHostedProcessorDelegate, currentRegion: region)
         case let .setMasterPassword(organizationIdentifier):
@@ -220,6 +222,8 @@ final class AuthCoordinator: NSObject, // swiftlint:disable:this type_body_lengt
                 attemptAutmaticBiometricUnlock: attemptAutomaticBiometricUnlock,
                 didSwitchAccountAutomatically: didSwitch
             )
+        case .vaultUnlockSetup:
+            showVaultUnlockSetup()
         }
     }
 
@@ -522,6 +526,21 @@ final class AuthCoordinator: NSObject, // swiftlint:disable:this type_body_lengt
         stackNavigator?.present(navigationController)
     }
 
+    /// Shows the remove master password screen.
+    ///
+    /// - Parameter organizationName: The organization's name.
+    ///
+    private func showRemoveMasterPassword(organizationName: String) {
+        let processor = RemoveMasterPasswordProcessor(
+            coordinator: asAnyCoordinator(),
+            state: RemoveMasterPasswordState(
+                organizationName: organizationName
+            )
+        )
+        let view = RemoveMasterPasswordView(store: Store(processor: processor))
+        stackNavigator?.push(view)
+    }
+
     /// Shows the self-hosted settings view.
     ///
     /// - Parameters:
@@ -713,6 +732,18 @@ final class AuthCoordinator: NSObject, // swiftlint:disable:this type_body_lengt
         if didSwitchAccountAutomatically {
             processor.state.toast = Toast(text: Localizations.accountSwitchedAutomatically)
         }
+    }
+
+    /// Shows the vault unlock setup screen.
+    ///
+    func showVaultUnlockSetup() {
+        let processor = VaultUnlockSetupProcessor(
+            coordinator: asAnyCoordinator(),
+            services: services,
+            state: VaultUnlockSetupState()
+        )
+        let view = VaultUnlockSetupView(store: Store(processor: processor))
+        stackNavigator?.push(view)
     }
 
     /// Show the WebAuthn two factor authentication view.
