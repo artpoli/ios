@@ -257,6 +257,9 @@ class DefaultAuthService: AuthService { // swiftlint:disable:this type_body_leng
     /// The code verifier used to login after receiving the code from the WebAuth.
     private var codeVerifier = ""
 
+    /// The service to get server-specified configuration
+    private let configService: ConfigService
+
     /// The service used by the application to manage the environment settings.
     private let environmentService: EnvironmentService
 
@@ -298,6 +301,7 @@ class DefaultAuthService: AuthService { // swiftlint:disable:this type_body_leng
     ///   - appIdService: The service used by the application to manage the app's ID.
     ///   - authAPIService: The API service used to make calls related to the auth process.
     ///   - clientService: The service that handles common client functionality such as encryption and decryption.
+    ///   - configService: The service to get server-specified configuration.
     ///   - environmentService: The service used by the application to manage the environment settings.
     ///   - keychainRepository: The repository used to manages keychain items.
     ///   - policyService: The service used by the application to manage the policy.
@@ -310,6 +314,7 @@ class DefaultAuthService: AuthService { // swiftlint:disable:this type_body_leng
         appIdService: AppIdService,
         authAPIService: AuthAPIService,
         clientService: ClientService,
+        configService: ConfigService,
         environmentService: EnvironmentService,
         keychainRepository: KeychainRepository,
         policyService: PolicyService,
@@ -321,6 +326,7 @@ class DefaultAuthService: AuthService { // swiftlint:disable:this type_body_leng
         self.appIdService = appIdService
         self.authAPIService = authAPIService
         self.clientService = clientService
+        self.configService = configService
         self.environmentService = environmentService
         self.keychainRepository = keychainRepository
         self.policyService = policyService
@@ -537,7 +543,7 @@ class DefaultAuthService: AuthService { // swiftlint:disable:this type_body_leng
         let response = try await accountAPIService.preLogin(email: username)
 
         // Get the identity token to log in to Bitwarden.
-        let hashedPassword = try await clientService.auth().hashPassword(
+        let hashedPassword = try await clientService.auth(isPreAuth: true).hashPassword(
             email: username,
             password: masterPassword,
             kdfParams: response.sdkKdf,
@@ -723,6 +729,9 @@ class DefaultAuthService: AuthService { // swiftlint:disable:this type_body_leng
     private func keyConnectorUrlForUnlock(_ response: IdentityTokenResponseModel) -> URL? {
         guard let keyConnectorUrl = response.keyConnectorUrl ??
             response.userDecryptionOptions?.keyConnectorOption?.keyConnectorUrl,
+            // If the user has a master password, they haven't been migrated to key connector yet
+            // and the master password should still be used for vault unlock.
+            response.userDecryptionOptions?.hasMasterPassword == false,
             !keyConnectorUrl.isEmpty
         else { return nil }
 
@@ -799,6 +808,9 @@ class DefaultAuthService: AuthService { // swiftlint:disable:this type_body_leng
             let urls = await stateService.getPreAuthEnvironmentUrls()
             let account = try Account(identityTokenResponseModel: identityTokenResponse, environmentUrls: urls)
             try await saveAccount(account, identityTokenResponse: identityTokenResponse)
+
+            // Get the config so it gets updated for this particular user.
+            await configService.getConfig(forceRefresh: true, isPreAuth: false)
 
             return identityTokenResponse
         } catch let error as IdentityTokenRequestError {

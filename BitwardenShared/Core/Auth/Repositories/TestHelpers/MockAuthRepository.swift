@@ -28,8 +28,13 @@ class MockAuthRepository: AuthRepository { // swiftlint:disable:this type_body_l
     var lockVaultUserId: String?
     var logoutCalled = false
     var logoutUserId: String?
+    var logoutUserInitiated = false
     var logoutResult: Result<Void, Error> = .success(())
+    var migrateUserToKeyConnectorCalled = false
+    var migrateUserToKeyConnectorPassword: String?
+    var migrateUserToKeyConnectorResult: Result<Void, Error> = .success(())
     var passwordStrengthEmail: String?
+    var passwordStrengthIsPreAuth = false
     var passwordStrengthPassword: String?
     var passwordStrengthResult: UInt8 = 0
     var pinProtectedUserKey = "123"
@@ -45,6 +50,7 @@ class MockAuthRepository: AuthRepository { // swiftlint:disable:this type_body_l
     var setMasterPasswordOrganizationIdentifier: String?
     var setMasterPasswordResetPasswordAutoEnroll: Bool?
     var setMasterPasswordResult: Result<Void, Error> = .success(())
+    var setPinsRequirePasswordAfterRestart: Bool?
     var setPinsResult: Result<Void, Error> = .success(())
     var setVaultTimeoutError: Error?
     var unlockVaultFromLoginWithDeviceKey: String?
@@ -170,9 +176,10 @@ class MockAuthRepository: AuthRepository { // swiftlint:disable:this type_body_l
         try isPinUnlockAvailableResult.get()
     }
 
-    func passwordStrength(email: String, password: String) async -> UInt8 {
+    func passwordStrength(email: String, password: String, isPreAuth: Bool) async -> UInt8 {
         passwordStrengthEmail = email
         passwordStrengthPassword = password
+        passwordStrengthIsPreAuth = isPreAuth
         return passwordStrengthResult
     }
 
@@ -180,14 +187,21 @@ class MockAuthRepository: AuthRepository { // swiftlint:disable:this type_body_l
         lockVaultUserId = userId
     }
 
-    func logout(userId: String?) async throws {
+    func logout(userId: String?, userInitiated: Bool) async throws {
         logoutUserId = userId
+        logoutUserInitiated = userInitiated
         try await logout()
     }
 
     func logout() async throws {
         logoutCalled = true
         try logoutResult.get()
+    }
+
+    func migrateUserToKeyConnector(password: String) async throws {
+        migrateUserToKeyConnectorCalled = true
+        migrateUserToKeyConnectorPassword = password
+        return try migrateUserToKeyConnectorResult.get()
     }
 
     func requestOtp() async throws {
@@ -208,9 +222,10 @@ class MockAuthRepository: AuthRepository { // swiftlint:disable:this type_body_l
         return match
     }
 
-    func setPins(_ pin: String, requirePasswordAfterRestart _: Bool) async throws {
+    func setPins(_ pin: String, requirePasswordAfterRestart: Bool) async throws {
         encryptedPin = pin
         pinProtectedUserKey = pin
+        setPinsRequirePasswordAfterRestart = requirePasswordAfterRestart
         try setPinsResult.get()
     }
 
