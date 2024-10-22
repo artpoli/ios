@@ -122,39 +122,6 @@ final class AuthRouterTests: BitwardenTestCase { // swiftlint:disable:this type_
         XCTAssertEqual(route, .complete)
     }
 
-    /// `handleAndRoute(_ :)` redirects `.accountBecameActive()` to `.enterpriseSingleSignOn`
-    ///     when the account is unlocked.
-    func test_handleAndRoute_accountBecameActive_noMpAndTDE_withBiometricsEnabled() async {
-        let active = Account.fixture(
-            profile: .fixture(
-                userDecryptionOptions: UserDecryptionOptions(
-                    hasMasterPassword: false,
-                    keyConnectorOption: nil,
-                    trustedDeviceOption: nil
-                )
-            )
-        )
-        stateService.activeAccount = active
-
-        biometricsRepository.biometricUnlockStatus = .success(
-            .available(.faceID, enabled: true, hasValidIntegrity: false)
-        )
-        stateService.isAuthenticated = [
-            active.profile.userId: true,
-        ]
-
-        authRepository.isLockedResult = .success(true)
-        let route = await subject.handleAndRoute(
-            .accountBecameActive(
-                active,
-                animated: true,
-                attemptAutomaticBiometricUnlock: true,
-                didSwitchAccountAutomatically: false
-            )
-        )
-        XCTAssertEqual(route, .enterpriseSingleSignOn(email: "user@bitwarden.com"))
-    }
-
     /// `handleAndRoute(_ :)` redirects `.accountBecameActive()` to `.vaultUnlock` when checking if
     /// an account is authenticated fails.
     func test_handleAndRoute_accountBecameActive_logout_isAuthenticatedError() async {
@@ -187,6 +154,7 @@ final class AuthRouterTests: BitwardenTestCase { // swiftlint:disable:this type_
 
     /// `handleAndRoute(_ :)` redirects `.didCompleteAuth` to `.landing` and doesn't set the
     /// carousel shown flag if the carousel feature flag is off.
+    @MainActor
     func test_handleAndRoute_didCompleteAuth_carouselNotShown() async {
         authRepository.activeAccount = .fixture()
         configService.featureFlagsBool[.nativeCarouselFlow] = false
@@ -199,6 +167,7 @@ final class AuthRouterTests: BitwardenTestCase { // swiftlint:disable:this type_
 
     /// `handleAndRoute(_ :)` redirects `.didCompleteAuth` to `.landing` and sets the carousel shown
     /// flag if the carousel feature flag is on and the carousel hasn't been shown yet.
+    @MainActor
     func test_handleAndRoute_didCompleteAuth_carouselShown() async {
         authRepository.activeAccount = .fixture()
         configService.featureFlagsBool[.nativeCarouselFlow] = true
@@ -215,6 +184,26 @@ final class AuthRouterTests: BitwardenTestCase { // swiftlint:disable:this type_
         authRepository.activeAccount = .fixture()
         let route = await subject.handleAndRoute(.didCompleteAuth)
         XCTAssertEqual(route, .complete)
+    }
+
+    /// `handleAndRoute(_:)` redirects `.didCompleteAuth` to `.autofillSetup` if the user still
+    /// needs to set up autofill.
+    func test_handleAndRoute_didCompleteAuth_incompleteAutofill() async {
+        authRepository.activeAccount = .fixture()
+        stateService.activeAccount = .fixture()
+        stateService.accountSetupAutofill["1"] = .incomplete
+        let route = await subject.handleAndRoute(.didCompleteAuth)
+        XCTAssertEqual(route, .autofillSetup)
+    }
+
+    /// `handleAndRoute(_:)` redirects `.didCompleteAuth` to `.vaultUnlockSetup` if the user still
+    /// needs to set up a vault unlock method.
+    func test_handleAndRoute_didCompleteAuth_incompleteVaultSetup() async {
+        authRepository.activeAccount = .fixture()
+        stateService.activeAccount = .fixture()
+        stateService.accountSetupVaultUnlock["1"] = .incomplete
+        let route = await subject.handleAndRoute(.didCompleteAuth)
+        XCTAssertEqual(route, .vaultUnlockSetup(.createAccount))
     }
 
     /// `handleAndRoute(_ :)` redirects `.didCompleteAuth` to `.landing` when there are no accounts.
@@ -820,6 +809,7 @@ final class AuthRouterTests: BitwardenTestCase { // swiftlint:disable:this type_
 
     /// `handleAndRoute(_ :)` redirects `.didStart` to `.introCarousel` if there's no accounts and
     /// the carousel flow is enabled.
+    @MainActor
     func test_handleAndRoute_didStart_carouselFlow() async {
         configService.featureFlagsBool[.nativeCarouselFlow] = true
 
@@ -830,6 +820,7 @@ final class AuthRouterTests: BitwardenTestCase { // swiftlint:disable:this type_
 
     /// `handleAndRoute(_ :)` redirects `.didStart` to `.landing` if there's no accounts, the
     /// carousel flow is enabled, but the carousel has already been shown.
+    @MainActor
     func test_handleAndRoute_didStart_carouselFlow_carouselShown() async {
         configService.featureFlagsBool[.nativeCarouselFlow] = true
         stateService.introCarouselShown = true
@@ -840,10 +831,11 @@ final class AuthRouterTests: BitwardenTestCase { // swiftlint:disable:this type_
     }
 
     /// `handleAndRoute(_ :)` redirects `.didStart` to `.landing` if it's running in an extension.
+    @MainActor
     func test_handleAndRoute_didStart_carouselFlow_extension() async {
         configService.featureFlagsBool[.nativeCarouselFlow] = true
 
-        subject = await AuthRouter(
+        subject = AuthRouter(
             isInAppExtension: true,
             services: ServiceContainer.withMocks(
                 authRepository: authRepository,
@@ -861,6 +853,7 @@ final class AuthRouterTests: BitwardenTestCase { // swiftlint:disable:this type_
 
     /// `handleAndRoute(_ :)` redirects `.didStart` to `.completeWithNeverUnlockKey` if there's an
     /// existing account with never lock enabled and sets the intro carousel as shown.
+    @MainActor
     func test_handleAndRoute_didStart_carouselFlow_existingAccountNeverLock() async {
         let account = Account.fixture()
         authRepository.activeAccount = .fixture()

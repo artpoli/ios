@@ -5,10 +5,10 @@ import XCTest
 class VaultUnlockSetupProcessorTests: BitwardenTestCase {
     // MARK: Properties
 
-    var authRepository: MockAuthRepository!
     var biometricsRepository: MockBiometricsRepository!
     var coordinator: MockCoordinator<AuthRoute, AuthEvent>!
     var errorReporter: MockErrorReporter!
+    var stateService: MockStateService!
     var subject: VaultUnlockSetupProcessor!
     var vaultUnlockSetupHelper: MockVaultUnlockSetupHelper!
 
@@ -17,20 +17,20 @@ class VaultUnlockSetupProcessorTests: BitwardenTestCase {
     override func setUp() {
         super.setUp()
 
-        authRepository = MockAuthRepository()
         biometricsRepository = MockBiometricsRepository()
         coordinator = MockCoordinator()
         errorReporter = MockErrorReporter()
+        stateService = MockStateService()
         vaultUnlockSetupHelper = MockVaultUnlockSetupHelper()
 
         subject = VaultUnlockSetupProcessor(
             coordinator: coordinator.asAnyCoordinator(),
             services: ServiceContainer.withMocks(
-                authRepository: authRepository,
                 biometricsRepository: biometricsRepository,
-                errorReporter: errorReporter
+                errorReporter: errorReporter,
+                stateService: stateService
             ),
-            state: VaultUnlockSetupState(),
+            state: VaultUnlockSetupState(accountSetupFlow: .createAccount),
             vaultUnlockSetupHelper: vaultUnlockSetupHelper
         )
     }
@@ -38,20 +38,53 @@ class VaultUnlockSetupProcessorTests: BitwardenTestCase {
     override func tearDown() {
         super.tearDown()
 
-        authRepository = nil
         biometricsRepository = nil
         coordinator = nil
         errorReporter = nil
+        stateService = nil
         subject = nil
         vaultUnlockSetupHelper = nil
     }
 
     // MARK: Tests
 
+    /// `perform(_:)` with `.continueFlow` navigates to autofill setup when in the create account flow.
+    @MainActor
+    func test_perform_continueFlow_createAccount() async {
+        stateService.activeAccount = .fixture()
+
+        await subject.perform(.continueFlow)
+
+        XCTAssertEqual(coordinator.events, [.didCompleteAuth])
+        XCTAssertEqual(stateService.accountSetupVaultUnlock["1"], .complete)
+    }
+
+    /// `perform(_:)` with `.continueFlow` logs an error if one occurs prior to navigates to
+    /// autofill setup.
+    @MainActor
+    func test_perform_continueFlow_error() async {
+        await subject.perform(.continueFlow)
+
+        XCTAssertEqual(coordinator.events, [.didCompleteAuth])
+        XCTAssertEqual(errorReporter.errors as? [StateServiceError], [.noActiveAccount])
+    }
+
+    /// `perform(_:)` with `.continueFlow` dismisses the view when in the settings flow.
+    @MainActor
+    func test_perform_continueFlow_settings() async {
+        subject.state.accountSetupFlow = .settings
+        stateService.activeAccount = .fixture()
+
+        await subject.perform(.continueFlow)
+
+        XCTAssertEqual(coordinator.routes, [.dismiss])
+        XCTAssertEqual(stateService.accountSetupVaultUnlock["1"], .complete)
+    }
+
     /// `perform(_:)` with `.loadData` fetches the biometrics unlock status.
     @MainActor
     func test_perform_loadData() async {
-        let status = BiometricsUnlockStatus.available(.faceID, enabled: false, hasValidIntegrity: false)
+        let status = BiometricsUnlockStatus.available(.faceID, enabled: false)
         biometricsRepository.biometricUnlockStatus = .success(status)
 
         await subject.perform(.loadData)
@@ -87,7 +120,7 @@ class VaultUnlockSetupProcessorTests: BitwardenTestCase {
     /// `perform(_:)` with `.loadData` fetches the biometrics unlock status for a device with Touch ID.
     @MainActor
     func test_perform_loadData_touchID() async {
-        let status = BiometricsUnlockStatus.available(.touchID, enabled: false, hasValidIntegrity: false)
+        let status = BiometricsUnlockStatus.available(.touchID, enabled: false)
         biometricsRepository.biometricUnlockStatus = .success(status)
 
         await subject.perform(.loadData)
@@ -99,11 +132,10 @@ class VaultUnlockSetupProcessorTests: BitwardenTestCase {
     /// `perform(_:)` with `.toggleUnlockMethod` disables biometrics unlock and updates the state.
     @MainActor
     func test_perform_toggleUnlockMethod_biometrics_disable() async {
-        subject.state.biometricsStatus = .available(.faceID, enabled: true, hasValidIntegrity: true)
+        subject.state.biometricsStatus = .available(.faceID, enabled: true)
         vaultUnlockSetupHelper.setBiometricUnlockStatus = .available(
             .faceID,
-            enabled: false,
-            hasValidIntegrity: false
+            enabled: false
         )
 
         await subject.perform(.toggleUnlockMethod(.biometrics(.faceID), newValue: false))
@@ -117,8 +149,7 @@ class VaultUnlockSetupProcessorTests: BitwardenTestCase {
     func test_perform_toggleUnlockMethod_biometrics_enable() async {
         vaultUnlockSetupHelper.setBiometricUnlockStatus = .available(
             .faceID,
-            enabled: true,
-            hasValidIntegrity: true
+            enabled: true
         )
 
         await subject.perform(.toggleUnlockMethod(.biometrics(.faceID), newValue: true))
@@ -150,17 +181,37 @@ class VaultUnlockSetupProcessorTests: BitwardenTestCase {
         XCTAssertFalse(subject.state.isPinUnlockOn)
     }
 
-    /// `receive(_:)` with `.continueFlow` navigates to autofill setup.
+    /// `receive(_:)` with `.setUpLater` shows an alert confirming the user wants to skip unlock
+    /// setup and then navigates to autofill setup.
     @MainActor
-    func test_receive_continueFlow() {
-        subject.receive(.continueFlow)
-        // TODO: PM-10278 Navigate to autofill setup
+    func test_receive_setUpLater() async throws {
+        stateService.activeAccount = .fixture()
+
+        subject.receive(.setUpLater)
+
+        let alert = try XCTUnwrap(coordinator.alertShown.last)
+        XCTAssertEqual(alert, .setUpUnlockMethodLater {})
+
+        try await alert.tapAction(title: Localizations.cancel)
+        XCTAssertTrue(coordinator.routes.isEmpty)
+
+        try await alert.tapAction(title: Localizations.confirm)
+        XCTAssertEqual(coordinator.events, [.didCompleteAuth])
+
+        XCTAssertEqual(stateService.accountSetupVaultUnlock["1"], .setUpLater)
     }
 
-    /// `receive(_:)` with `.setUpLater` skips unlock setup.
+    /// `receive(_:)` with `.setUpLater` logs an error if one occurs while saving the set up later flag.
     @MainActor
-    func test_receive_setUpLater() {
+    func test_receive_setUpLater_error() async throws {
         subject.receive(.setUpLater)
-        // TODO: PM-10270 Skip unlock setup
+
+        let alert = try XCTUnwrap(coordinator.alertShown.last)
+        XCTAssertEqual(alert, .setUpUnlockMethodLater {})
+
+        try await alert.tapAction(title: Localizations.confirm)
+        XCTAssertEqual(coordinator.events, [.didCompleteAuth])
+
+        XCTAssertEqual(errorReporter.errors as? [StateServiceError], [.noActiveAccount])
     }
 }

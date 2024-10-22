@@ -44,6 +44,8 @@ class VaultUnlockSetupProcessor: StateProcessor<VaultUnlockSetupState, VaultUnlo
 
     override func perform(_ effect: VaultUnlockSetupEffect) async {
         switch effect {
+        case .continueFlow:
+            await continueFlow()
         case .loadData:
             await loadData()
         case let .toggleUnlockMethod(unlockMethod, newValue):
@@ -58,16 +60,29 @@ class VaultUnlockSetupProcessor: StateProcessor<VaultUnlockSetupState, VaultUnlo
 
     override func receive(_ action: VaultUnlockSetupAction) {
         switch action {
-        case .continueFlow:
-            // TODO: PM-10278 Navigate to autofill setup
-            break
         case .setUpLater:
-            // TODO: PM-10270 Skip unlock setup
-            break
+            showSetUpLaterAlert()
         }
     }
 
     // MARK: Private
+
+    /// Continues the set up unlock flow by navigating to autofill setup.
+    ///
+    private func continueFlow() async {
+        do {
+            try await services.stateService.setAccountSetupVaultUnlock(.complete)
+        } catch {
+            services.errorReporter.log(error: error)
+        }
+
+        switch state.accountSetupFlow {
+        case .createAccount:
+            await coordinator.handleEvent(.didCompleteAuth)
+        case .settings:
+            coordinator.navigate(to: .dismiss)
+        }
+    }
 
     /// Load any initial data for the view.
     ///
@@ -78,6 +93,20 @@ class VaultUnlockSetupProcessor: StateProcessor<VaultUnlockSetupState, VaultUnlo
             services.errorReporter.log(error: error)
             coordinator.showAlert(.defaultAlert(title: Localizations.anErrorHasOccurred))
         }
+    }
+
+    /// Shows the alert confirming that the user wants to proceed without setting up their unlock
+    /// methods.
+    ///
+    private func showSetUpLaterAlert() {
+        coordinator.showAlert(.setUpUnlockMethodLater {
+            do {
+                try await self.services.stateService.setAccountSetupVaultUnlock(.setUpLater)
+            } catch {
+                self.services.errorReporter.log(error: error)
+            }
+            await self.coordinator.handleEvent(.didCompleteAuth)
+        })
     }
 
     /// Toggles whether unlock with biometrics is enabled.

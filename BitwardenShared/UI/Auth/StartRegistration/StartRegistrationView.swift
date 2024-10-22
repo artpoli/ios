@@ -18,7 +18,7 @@ struct StartRegistrationView: View {
     var body: some View {
         VStack(spacing: 16) {
             if store.state.isCreateAccountFeatureFlagEnabled {
-                Image(decorative: Asset.Images.vaultIllustration)
+                Image(decorative: Asset.Images.Illustrations.vault)
                     .resizable()
                     .frame(width: 132, height: 132)
                     .padding(.top, 24)
@@ -107,7 +107,7 @@ struct StartRegistrationView: View {
     private var termsAndPrivacyText: some View {
         Text(LocalizedStringKey(store.state.termsAndPrivacyDisclaimerText))
             .styleGuide(.footnote)
-            .tint(Asset.Colors.primaryBitwarden.swiftUIColor)
+            .tint(Asset.Colors.textInteraction.swiftUIColor)
             .foregroundColor(Asset.Colors.textPrimary.swiftUIColor)
             .padding([.bottom], 32)
             .multilineTextAlignment(.center)
@@ -121,7 +121,7 @@ struct StartRegistrationView: View {
                 send: StartRegistrationAction.toggleReceiveMarketing
             )) {
                 Text(LocalizedStringKey(store.state.receiveMarketingEmailsText))
-                    .tint(Asset.Colors.primaryBitwarden.swiftUIColor)
+                    .tint(Asset.Colors.textInteraction.swiftUIColor)
                     .foregroundColor(Asset.Colors.textPrimary.swiftUIColor)
                     .styleGuide(.subheadline)
             }
@@ -138,5 +138,17 @@ struct StartRegistrationView: View {
 #if DEBUG
 #Preview {
     StartRegistrationView(store: Store(processor: StateProcessor(state: StartRegistrationState())))
+}
+
+#Preview("Native Create Account Flow") {
+    StartRegistrationView(
+        store: Store(
+            processor: StateProcessor(
+                state: StartRegistrationState(
+                    isCreateAccountFeatureFlagEnabled: true
+                )
+            )
+        )
+    )
 }
 #endif

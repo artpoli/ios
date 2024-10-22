@@ -4,24 +4,26 @@ import Foundation
 @testable import BitwardenShared
 
 class MockAppSettingsStore: AppSettingsStore {
+    var accountSetupAutofill = [String: AccountSetupProgress]()
+    var accountSetupImportLogins = [String: AccountSetupProgress]()
+    var accountSetupVaultUnlock = [String: AccountSetupProgress]()
     var addSitePromptShown = false
     var allowSyncOnRefreshes = [String: Bool]()
     var appId: String?
     var appLocale: String?
     var appTheme: String?
-    var biometricIntegrityStateLegacy: String?
     var disableWebIcons = false
     var introCarouselShown = false
     var lastUserShouldConnectToWatch = false
     var loginRequest: LoginRequestNotification?
     var migrationVersion = 0
+    var overrideDebugFeatureFlagCalled = false
     var preAuthEnvironmentUrls: EnvironmentUrlData?
     var preAuthServerConfig: BitwardenShared.ServerConfig?
     var rememberedEmail: String?
     var rememberedOrgIdentifier: String?
 
     var biometricAuthenticationEnabled = [String: Bool?]()
-    var biometricIntegrityStates = [String: String?]()
     var clearClipboardValues = [String: ClearClipboardValue]()
     var connectToWatchByUserId = [String: Bool]()
     var defaultUriMatchTypeByUserId = [String: UriMatchType]()
@@ -30,14 +32,17 @@ class MockAppSettingsStore: AppSettingsStore {
     var encryptedPrivateKeys = [String: String]()
     var encryptedUserKeys = [String: String]()
     var eventsByUserId = [String: [EventData]]()
+    var featureFlags = [String: Bool]()
     var lastActiveTime = [String: Date]()
     var lastSyncTimeByUserId = [String: Date]()
     var masterPasswordHashes = [String: String]()
     var notificationsLastRegistrationDates = [String: Date]()
     var passwordGenerationOptions = [String: PasswordGenerationOptions]()
     var pinProtectedUserKey = [String: String]()
+    var accountCreationEnvironmentUrls = [String: EnvironmentUrlData]()
     var serverConfig = [String: ServerConfig]()
     var shouldTrustDevice = [String: Bool?]()
+    var syncToAuthenticatorByUserId = [String: Bool]()
     var timeoutAction = [String: Int]()
     var twoFactorTokens = [String: String]()
     var usesKeyConnector = [String: Bool]()
@@ -53,6 +58,18 @@ class MockAppSettingsStore: AppSettingsStore {
 
     lazy var activeIdSubject = CurrentValueSubject<String?, Never>(self.state?.activeUserId)
 
+    func accountSetupAutofill(userId: String) -> AccountSetupProgress? {
+        accountSetupAutofill[userId]
+    }
+
+    func accountSetupImportLogins(userId: String) -> AccountSetupProgress? {
+        accountSetupImportLogins[userId]
+    }
+
+    func accountSetupVaultUnlock(userId: String) -> AccountSetupProgress? {
+        accountSetupVaultUnlock[userId]
+    }
+
     func allowSyncOnRefresh(userId: String) -> Bool {
         allowSyncOnRefreshes[userId] ?? false
     }
@@ -63,6 +80,10 @@ class MockAppSettingsStore: AppSettingsStore {
 
     func connectToWatch(userId: String) -> Bool {
         connectToWatchByUserId[userId] ?? false
+    }
+
+    func debugFeatureFlag(name: String) -> Bool? {
+        featureFlags[name]
     }
 
     func defaultUriMatchType(userId: String) -> UriMatchType? {
@@ -105,6 +126,11 @@ class MockAppSettingsStore: AppSettingsStore {
         notificationsLastRegistrationDates[userId]
     }
 
+    func overrideDebugFeatureFlag(name: String, value: Bool?) {
+        overrideDebugFeatureFlagCalled = true
+        featureFlags[name] = value
+    }
+
     func passwordGenerationOptions(userId: String) -> PasswordGenerationOptions? {
         passwordGenerationOptions[userId]
     }
@@ -113,12 +139,28 @@ class MockAppSettingsStore: AppSettingsStore {
         pinProtectedUserKey[userId]
     }
 
+    func accountCreationEnvironmentUrls(email: String) -> BitwardenShared.EnvironmentUrlData? {
+        accountCreationEnvironmentUrls[email]
+    }
+
     func twoFactorToken(email: String) -> String? {
         twoFactorTokens[email]
     }
 
     func serverConfig(userId: String) -> ServerConfig? {
         serverConfig[userId]
+    }
+
+    func setAccountSetupAutofill(_ autofillSetup: AccountSetupProgress?, userId: String) {
+        accountSetupAutofill[userId] = autofillSetup
+    }
+
+    func setAccountSetupImportLogins(_ importLoginsSetup: AccountSetupProgress?, userId: String) {
+        accountSetupImportLogins[userId] = importLoginsSetup
+    }
+
+    func setAccountSetupVaultUnlock(_ vaultUnlockSetup: AccountSetupProgress?, userId: String) {
+        accountSetupVaultUnlock[userId] = vaultUnlockSetup
     }
 
     func setAllowSyncOnRefresh(_ allowSyncOnRefresh: Bool?, userId: String) {
@@ -193,12 +235,20 @@ class MockAppSettingsStore: AppSettingsStore {
         pinProtectedUserKey[userId] = key
     }
 
+    func setAccountCreationEnvironmentUrls(environmentUrlData: BitwardenShared.EnvironmentUrlData, email: String) {
+        accountCreationEnvironmentUrls[email] = environmentUrlData
+    }
+
     func setServerConfig(_ config: ServerConfig?, userId: String) {
         serverConfig[userId] = config
     }
 
     func setShouldTrustDevice(shouldTrustDevice: Bool?, userId: String) {
         self.shouldTrustDevice[userId] = shouldTrustDevice
+    }
+
+    func setSyncToAuthenticator(_ syncToAuthenticator: Bool, userId: String) {
+        syncToAuthenticatorByUserId[userId] = syncToAuthenticator
     }
 
     func setTimeoutAction(key: SessionTimeoutAction, userId: String) {
@@ -233,6 +283,10 @@ class MockAppSettingsStore: AppSettingsStore {
         shouldTrustDevice[userId] ?? false
     }
 
+    func syncToAuthenticator(userId: String) -> Bool {
+        syncToAuthenticatorByUserId[userId] ?? false
+    }
+
     func timeoutAction(userId: String) -> Int? {
         timeoutAction[userId]
     }
@@ -265,23 +319,11 @@ extension MockAppSettingsStore {
         (biometricAuthenticationEnabled[userId] ?? false) ?? false
     }
 
-    func biometricIntegrityState(userId: String) -> String? {
-        biometricIntegrityStates[userId] ?? nil
-    }
-
     func setBiometricAuthenticationEnabled(_ isEnabled: Bool?, for userId: String) {
         guard isEnabled != nil else {
             biometricAuthenticationEnabled.removeValue(forKey: userId)
             return
         }
         biometricAuthenticationEnabled[userId] = isEnabled
-    }
-
-    func setBiometricIntegrityState(_ base64EncodedIntegrityState: String?, userId: String) {
-        guard let base64EncodedIntegrityState else {
-            biometricIntegrityStates.removeValue(forKey: userId)
-            return
-        }
-        biometricIntegrityStates[userId] = base64EncodedIntegrityState
     }
 }

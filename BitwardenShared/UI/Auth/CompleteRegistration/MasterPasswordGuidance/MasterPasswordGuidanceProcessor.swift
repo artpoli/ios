@@ -12,15 +12,24 @@ class MasterPasswordGuidanceProcessor: StateProcessor<
     /// The coordinator that handles navigation.
     private let coordinator: AnyCoordinator<AuthRoute, AuthEvent>
 
+    /// The delegate used to communiate saving a new generated password.
+    private weak var delegate: MasterPasswordUpdateDelegate?
+
     // MARK: Initialization
 
     /// Creates a new `CompleteRegistrationProcessor`.
     ///
-    /// - Parameter coordinator: The coordinator that handles navigation.
+    /// - Parameters:
+    ///   - coordinator: The coordinator that handles navigation.
+    ///   - delegate: The delegate for the processor to notifiy saving a generated password.
     ///
-    init(coordinator: AnyCoordinator<AuthRoute, AuthEvent>) {
+    init(
+        coordinator: AnyCoordinator<AuthRoute, AuthEvent>,
+        delegate: MasterPasswordUpdateDelegate?
+    ) {
         self.coordinator = coordinator
-        super.init(state: ())
+        self.delegate = delegate
+        super.init()
     }
 
     // MARK: Methods
@@ -30,8 +39,10 @@ class MasterPasswordGuidanceProcessor: StateProcessor<
         case .dismiss:
             coordinator.navigate(to: .dismissPresented)
         case .generatePasswordPressed:
-            // TODO: PM-10267
-            break
+            coordinator.navigate(
+                to: .masterPasswordGenerator,
+                context: delegate
+            )
         }
     }
 }

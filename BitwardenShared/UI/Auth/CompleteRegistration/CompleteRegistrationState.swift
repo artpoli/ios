@@ -52,14 +52,6 @@ struct CompleteRegistrationState: Equatable, Sendable {
     /// 0-4 (weak to strong password).
     var passwordStrengthScore: UInt8?
 
-    /// The password visibility icon used in the view's text fields.
-    var passwordVisibleIcon: ImageAsset {
-        arePasswordsVisible ? Asset.Images.hidden : Asset.Images.visible
-    }
-
-    /// The region where the account should be created
-    var region: RegionType?
-
     /// The required text count for the password strength.
     var requiredPasswordCount = Constants.minimumPasswordCharacters
 

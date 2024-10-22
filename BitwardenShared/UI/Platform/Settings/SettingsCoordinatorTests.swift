@@ -282,6 +282,14 @@ class SettingsCoordinatorTests: BitwardenTestCase {
         XCTAssertTrue(action.view is UIHostingController<VaultSettingsView>)
     }
 
+    /// `navigate(to:)` with `.vaultUnlockSetup` pushes the vault unlock setup screen.
+    @MainActor
+    func test_navigateTo_vaultUnlockSetup() throws {
+        subject.navigate(to: .vaultUnlockSetup)
+
+        XCTAssertEqual(module.authCoordinator.routes, [.vaultUnlockSetup(.settings)])
+    }
+
     /// `showLoadingOverlay()` and `hideLoadingOverlay()` can be used to show and hide the loading overlay.
     @MainActor
     func test_show_hide_loadingOverlay() throws {
@@ -304,6 +312,21 @@ class SettingsCoordinatorTests: BitwardenTestCase {
         subject.start()
 
         XCTAssertTrue(stackNavigator.actions.last?.view is SettingsView)
+    }
+
+    /// `updateSettingsTabBadge(_:)` updates the badge value on the root view controller's tab bar item.
+    @MainActor
+    func test_updateSettingsTabBadge() {
+        stackNavigator.rootViewController = UIViewController()
+
+        subject.updateSettingsTabBadge("1")
+        XCTAssertEqual(stackNavigator.rootViewController?.tabBarItem.badgeValue, "1")
+
+        subject.updateSettingsTabBadge("2")
+        XCTAssertEqual(stackNavigator.rootViewController?.tabBarItem.badgeValue, "2")
+
+        subject.updateSettingsTabBadge(nil)
+        XCTAssertNil(stackNavigator.rootViewController?.tabBarItem.badgeValue)
     }
 }
 

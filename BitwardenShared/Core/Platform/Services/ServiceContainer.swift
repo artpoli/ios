@@ -1,3 +1,4 @@
+import AuthenticatorBridgeKit
 import BitwardenSdk
 import UIKit
 
@@ -34,6 +35,9 @@ public class ServiceContainer: Services { // swiftlint:disable:this type_body_le
 
     /// The service used by the application to handle authentication tasks.
     let authService: AuthService
+
+    /// The service used by the application to sync TOTP codes with the Authenticator app.
+    let authenticatorSyncService: AuthenticatorSyncService?
 
     /// The service which manages the ciphers exposed to the system for AutoFill suggestions.
     let autofillCredentialService: AutofillCredentialService
@@ -155,6 +159,7 @@ public class ServiceContainer: Services { // swiftlint:disable:this type_body_le
     ///   - appSettingsStore: The service used by the application to persist app setting values.
     ///   - authRepository: The repository used by the application to manage auth data for the UI layer.
     ///   - authService: The service used by the application to handle authentication tasks.
+    ///   - authenticatorSyncService: The service used by the application to sync TOTP codes with the Authenticator app.
     ///   - autofillCredentialService: The service which manages the ciphers exposed to the system
     ///     for AutoFill suggestions.
     ///   - biometricsRepository: The repository to manage biometric unlock policies and access
@@ -202,6 +207,7 @@ public class ServiceContainer: Services { // swiftlint:disable:this type_body_le
         appSettingsStore: AppSettingsStore,
         authRepository: AuthRepository,
         authService: AuthService,
+        authenticatorSyncService: AuthenticatorSyncService,
         autofillCredentialService: AutofillCredentialService,
         biometricsRepository: BiometricsRepository,
         biometricsService: BiometricsService,
@@ -245,6 +251,7 @@ public class ServiceContainer: Services { // swiftlint:disable:this type_body_le
         self.appSettingsStore = appSettingsStore
         self.authRepository = authRepository
         self.authService = authService
+        self.authenticatorSyncService = authenticatorSyncService
         self.autofillCredentialService = autofillCredentialService
         self.biometricsRepository = biometricsRepository
         self.biometricsService = biometricsService
@@ -313,10 +320,11 @@ public class ServiceContainer: Services { // swiftlint:disable:this type_body_le
         let stateService = DefaultStateService(
             appSettingsStore: appSettingsStore,
             dataStore: dataStore,
+            errorReporter: errorReporter,
             keychainRepository: keychainRepository
         )
 
-        let environmentService = DefaultEnvironmentService(stateService: stateService)
+        let environmentService = DefaultEnvironmentService(errorReporter: errorReporter, stateService: stateService)
         let collectionService = DefaultCollectionService(collectionDataStore: dataStore, stateService: stateService)
         let settingsService = DefaultSettingsService(settingsDataStore: dataStore, stateService: stateService)
         let tokenService = DefaultTokenService(keychainRepository: keychainRepository, stateService: stateService)
@@ -327,6 +335,7 @@ public class ServiceContainer: Services { // swiftlint:disable:this type_body_le
         )
 
         let configService = DefaultConfigService(
+            appSettingsStore: appSettingsStore,
             configApiService: apiService,
             errorReporter: errorReporter,
             stateService: stateService,
@@ -471,6 +480,7 @@ public class ServiceContainer: Services { // swiftlint:disable:this type_body_le
             clientService: clientService,
             configService: configService,
             environmentService: environmentService,
+            errorReporter: errorReporter,
             keychainRepository: keychainRepository,
             policyService: policyService,
             stateService: stateService,
@@ -599,6 +609,41 @@ public class ServiceContainer: Services { // swiftlint:disable:this type_body_le
             vaultTimeoutService: vaultTimeoutService
         )
 
+        let authenticatorDataStore = AuthenticatorBridgeDataStore(
+            errorReporter: errorReporter,
+            groupIdentifier: Bundle.main.sharedAppGroupIdentifier,
+            storeType: .persisted
+        )
+
+        let sharedKeychainRepository = DefaultSharedKeychainRepository(
+            sharedAppGroupIdentifier: Bundle.main.sharedAppGroupIdentifier,
+            keychainService: keychainService
+        )
+
+        let sharedCryptographyService = DefaultAuthenticatorCryptographyService(
+            sharedKeychainRepository: sharedKeychainRepository
+        )
+
+        let authBridgeItemService = DefaultAuthenticatorBridgeItemService(
+            cryptoService: sharedCryptographyService,
+            dataStore: authenticatorDataStore,
+            sharedKeychainRepository: sharedKeychainRepository
+        )
+
+        let authenticatorSyncService = DefaultAuthenticatorSyncService(
+            authBridgeItemService: authBridgeItemService,
+            authRepository: authRepository,
+            cipherDataStore: dataStore,
+            clientService: clientService,
+            configService: configService,
+            errorReporter: errorReporter,
+            keychainRepository: keychainRepository,
+            sharedKeychainRepository: sharedKeychainRepository,
+            stateService: stateService,
+            vaultTimeoutService: vaultTimeoutService
+        )
+        Task { await authenticatorSyncService.start() }
+
         self.init(
             apiService: apiService,
             appIdService: appIdService,
@@ -606,6 +651,7 @@ public class ServiceContainer: Services { // swiftlint:disable:this type_body_le
             appSettingsStore: appSettingsStore,
             authRepository: authRepository,
             authService: authService,
+            authenticatorSyncService: authenticatorSyncService,
             autofillCredentialService: autofillCredentialService,
             biometricsRepository: biometricsRepository,
             biometricsService: biometricsService,

@@ -19,7 +19,7 @@ struct MasterPasswordGuidanceView: View {
 
                 detailedInstructionsView
             }
-            .background(Asset.Colors.backgroundTertiary.swiftUIColor)
+            .background(Asset.Colors.backgroundSecondary.swiftUIColor)
             .clipShape(RoundedRectangle(cornerRadius: 10))
 
             passwordGeneratorButton
@@ -77,10 +77,8 @@ struct MasterPasswordGuidanceView: View {
         } label: {
             HStack(spacing: 16) {
                 HStack(alignment: .top, spacing: 16) {
-                    Image(decorative: Asset.Images.restart2)
-                        .resizable()
-                        .frame(width: 24, height: 24)
-                        .foregroundStyle(Asset.Colors.primaryBitwarden.swiftUIColor)
+                    Image(decorative: Asset.Images.generate24)
+                        .foregroundStyle(Asset.Colors.iconSecondary.swiftUIColor)
 
                     VStack(alignment: .leading, spacing: 0) {
                         Text(Localizations.useTheGeneratorToCreateAStrongUniquePassword)
@@ -90,16 +88,16 @@ struct MasterPasswordGuidanceView: View {
 
                         Text(Localizations.tryItOut)
                             .styleGuide(.subheadline)
-                            .foregroundStyle(Asset.Colors.primaryBitwarden.swiftUIColor)
+                            .foregroundStyle(Asset.Colors.textInteraction.swiftUIColor)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
-                Image(decorative: Asset.Images.rightAngle)
-                    .foregroundStyle(Asset.Colors.textSecondary.swiftUIColor)
+                Image(decorative: Asset.Images.chevronRight16)
+                    .foregroundStyle(Asset.Colors.iconPrimary.swiftUIColor)
             }
             .padding(16)
-            .background(Asset.Colors.backgroundTertiary.swiftUIColor)
+            .background(Asset.Colors.backgroundSecondary.swiftUIColor)
             .clipShape(RoundedRectangle(cornerRadius: 10))
         }
     }
@@ -121,12 +119,6 @@ struct MasterPasswordGuidanceView: View {
 
 #if DEBUG
 #Preview {
-    MasterPasswordGuidanceView(
-        store: Store(
-            processor: StateProcessor(
-                state: ()
-            )
-        )
-    )
+    MasterPasswordGuidanceView(store: Store(processor: StateProcessor()))
 }
 #endif

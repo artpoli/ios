@@ -170,6 +170,27 @@ class TwoFactorAuthProcessorTests: BitwardenTestCase { // swiftlint:disable:this
         XCTAssertEqual(coordinator.routes, [])
     }
 
+    /// `perform(_:)` with `.beginDuoAuth` show toast if duo AuthUrl is nil.
+    @MainActor
+    func test_perform_beginDuoAuth_failure_nil_authUrl() async {
+        subject.state.authMethod = .duo
+        subject.state.authMethodsData = AuthMethodsData(
+            duo: Duo(
+                authUrl: nil,
+                host: "value",
+                signature: "value"
+            )
+        )
+        await subject.perform(.beginDuoAuth)
+
+        XCTAssertEqual(coordinator.routes, [])
+        XCTAssertEqual(
+            subject.state.toast,
+            Toast(title: Localizations.errorConnectingWithTheDuoServiceUseADifferentTwoStepLoginMethodOrContactDuoForAssistance)
+            // swiftlint:disable:previous line_length
+        )
+    }
+
     /// `perform(_:)` with `.beginDuoAuth` initates the duo auth flow.
     @MainActor
     func test_perform_beginDuoAuth_success() async {
@@ -613,7 +634,7 @@ class TwoFactorAuthProcessorTests: BitwardenTestCase { // swiftlint:disable:this
 
         XCTAssertFalse(coordinator.isLoadingOverlayShowing)
         XCTAssertNil(coordinator.loadingOverlaysShown.last)
-        XCTAssertNil(subject.state.toast?.text, Localizations.verificationEmailSent)
+        XCTAssertNil(subject.state.toast)
     }
 
     /// `perform(_:)` with `.resendEmailTapped` sends the email and displays the toast.
@@ -625,7 +646,7 @@ class TwoFactorAuthProcessorTests: BitwardenTestCase { // swiftlint:disable:this
 
         XCTAssertFalse(coordinator.isLoadingOverlayShowing)
         XCTAssertEqual(coordinator.loadingOverlaysShown.last, LoadingOverlayState(title: Localizations.submitting))
-        XCTAssertEqual(subject.state.toast?.text, Localizations.verificationEmailSent)
+        XCTAssertEqual(subject.state.toast, Toast(title: Localizations.verificationEmailSent))
     }
 
     /// `perform(_:)` with `.tryAgainTapped` starts reading NFC tags.
@@ -691,7 +712,7 @@ class TwoFactorAuthProcessorTests: BitwardenTestCase { // swiftlint:disable:this
     /// `receive(_:)` with `.toastShown` updates the state's toast value.
     @MainActor
     func test_receive_toastShown() {
-        let toast = Toast(text: "toast!")
+        let toast = Toast(title: "toast!")
         subject.receive(.toastShown(toast))
         XCTAssertEqual(subject.state.toast, toast)
 

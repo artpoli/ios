@@ -216,7 +216,7 @@ final class TwoFactorAuthProcessor: StateProcessor<TwoFactorAuthState, TwoFactor
             try await services.authService.resendVerificationCodeEmail()
 
             coordinator.hideLoadingOverlay()
-            state.toast = Toast(text: Localizations.verificationEmailSent)
+            state.toast = Toast(title: Localizations.verificationEmailSent)
         } catch {
             coordinator.hideLoadingOverlay()
             coordinator.showAlert(.defaultAlert(
@@ -377,7 +377,10 @@ extension TwoFactorAuthProcessor: DuoAuthenticationFlowDelegate {
 
         guard let authURLValue = maybeAuthURL,
               let authURL = URL(string: authURLValue) else {
-            state.toast = Toast(text: Localizations.duoUnsupported)
+            state.toast = Toast(
+                // swiftlint:disable:next line_length
+                title: Localizations.errorConnectingWithTheDuoServiceUseADifferentTwoStepLoginMethodOrContactDuoForAssistance
+            )
             return
         }
 

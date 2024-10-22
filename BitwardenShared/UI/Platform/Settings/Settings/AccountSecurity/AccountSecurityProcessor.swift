@@ -5,7 +5,7 @@ import OSLog
 
 /// The processor used to manage state and handle actions for the account security screen.
 ///
-final class AccountSecurityProcessor: StateProcessor<
+final class AccountSecurityProcessor: StateProcessor<// swiftlint:disable:this type_body_length
     AccountSecurityState,
     AccountSecurityAction,
     AccountSecurityEffect
@@ -14,6 +14,7 @@ final class AccountSecurityProcessor: StateProcessor<
 
     typealias Services = HasAuthRepository
         & HasBiometricsRepository
+        & HasConfigService
         & HasErrorReporter
         & HasPolicyService
         & HasSettingsRepository
@@ -62,6 +63,8 @@ final class AccountSecurityProcessor: StateProcessor<
             await showAccountFingerprintPhraseAlert()
         case .appeared:
             await appeared()
+        case .dismissSetUpUnlockActionCard:
+            await dismissSetUpUnlockActionCard()
         case .loadData:
             await loadData()
         case .lockVault:
@@ -72,6 +75,10 @@ final class AccountSecurityProcessor: StateProcessor<
                     )
                 )
             )
+        case .streamSettingsBadge:
+            await streamSettingsBadge()
+        case let .toggleSyncWithAuthenticator(isOn):
+            await setSyncToAuthenticator(isOn)
         case let .toggleUnlockWithBiometrics(isOn):
             await setBioMetricAuth(isOn)
         case let .toggleUnlockWithPINCode(isOn):
@@ -97,6 +104,8 @@ final class AccountSecurityProcessor: StateProcessor<
             setTimeoutAction(newValue)
         case let .sessionTimeoutValueChanged(newValue):
             setVaultTimeout(value: newValue)
+        case .showSetUpUnlock:
+            coordinator.navigate(to: .vaultUnlockSetup)
         case .twoStepLoginPressed:
             showTwoStepLoginAlert()
         }
@@ -124,6 +133,33 @@ final class AccountSecurityProcessor: StateProcessor<
         }
     }
 
+    /// If the native create account feature flag is enabled, this marks the user's vault unlock
+    /// account setup complete. This should be called whenever PIN or biometrics unlock has been
+    /// turned on.
+    ///
+    private func completeAccountSetupVaultUnlockIfNeeded() async {
+        guard await services.configService.getFeatureFlag(.nativeCreateAccountFlow) else { return }
+        do {
+            guard let progress = try await services.stateService.getAccountSetupVaultUnlock(),
+                  progress != .complete
+            else { return }
+            try await services.stateService.setAccountSetupVaultUnlock(.complete)
+        } catch {
+            services.errorReporter.log(error: error)
+        }
+    }
+
+    /// Dismisses the set up unlock action card by marking the user's vault unlock setup progress complete.
+    ///
+    private func dismissSetUpUnlockActionCard() async {
+        do {
+            try await services.stateService.setAccountSetupVaultUnlock(.complete)
+        } catch {
+            services.errorReporter.log(error: error)
+            coordinator.showAlert(.defaultAlert(title: Localizations.anErrorHasOccurred))
+        }
+    }
+
     /// Load any initial data for the view.
     private func loadData() async {
         do {
@@ -131,6 +167,11 @@ final class AccountSecurityProcessor: StateProcessor<
 
             if try await services.authRepository.isPinUnlockAvailable() {
                 state.isUnlockWithPINCodeOn = true
+            }
+            state.shouldShowAuthenticatorSyncSection =
+                await services.configService.getFeatureFlag(.enableAuthenticatorSync)
+            if state.shouldShowAuthenticatorSyncSection {
+                state.isAuthenticatorSyncEnabled = try await services.stateService.getSyncToAuthenticator()
             }
         } catch {
             services.errorReporter.log(error: error)
@@ -159,6 +200,19 @@ final class AccountSecurityProcessor: StateProcessor<
     private func refreshVaultTimeoutAction() async {
         if let sessionTimeoutAction = try? await services.authRepository.sessionTimeoutAction() {
             state.sessionTimeoutAction = sessionTimeoutAction
+        }
+    }
+
+    /// Sets the user's sync with Authenticator setting
+    ///
+    /// - Parameter enabled: Whether or not the the user wants to enable sync with Authenticator.
+    ///
+    private func setSyncToAuthenticator(_ enabled: Bool) async {
+        do {
+            try await services.stateService.setSyncToAuthenticator(enabled)
+            state.isAuthenticatorSyncEnabled = enabled
+        } catch {
+            services.errorReporter.log(error: error)
         }
     }
 
@@ -274,6 +328,23 @@ final class AccountSecurityProcessor: StateProcessor<
         // Refresh vault timeout action in case the user doesn't have a password and biometric
         // unlock was disabled.
         await refreshVaultTimeoutAction()
+
+        if enabled {
+            await completeAccountSetupVaultUnlockIfNeeded()
+        }
+    }
+
+    /// Streams the state of the badges in the settings tab.
+    ///
+    private func streamSettingsBadge() async {
+        guard await services.configService.getFeatureFlag(.nativeCreateAccountFlow) else { return }
+        do {
+            for await badgeState in try await services.stateService.settingsBadgePublisher().values {
+                state.badgeState = badgeState
+            }
+        } catch {
+            services.errorReporter.log(error: error)
+        }
     }
 
     /// Shows an alert prompting the user to enter their PIN. If set successfully, the toggle will be turned on.
@@ -288,5 +359,9 @@ final class AccountSecurityProcessor: StateProcessor<
 
         // Refresh vault timeout action in case the user doesn't have a password and the pin was disabled.
         await refreshVaultTimeoutAction()
+
+        if isOn {
+            await completeAccountSetupVaultUnlockIfNeeded()
+        }
     }
 }

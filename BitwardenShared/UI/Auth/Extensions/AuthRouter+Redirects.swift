@@ -30,6 +30,10 @@ extension AuthRouter {
         }
         if account.profile.forcePasswordResetReason != nil {
             return .updateMasterPassword
+        } else if await (try? services.stateService.getAccountSetupVaultUnlock()) == .incomplete {
+            return .vaultUnlockSetup(.createAccount)
+        } else if await (try? services.stateService.getAccountSetupAutofill()) == .incomplete {
+            return .autofillSetup
         } else {
             await setCarouselShownIfEnabled()
             return .complete
@@ -328,7 +332,7 @@ extension AuthRouter {
     /// - Parameters:
     ///    - activeAccount: The active account.
     ///    - animated: If the suggested route can be animated, use this value.
-    ///    - shouldAttemptAutomaticBiometricUnlock: If the route uses automatic bioemtrics unlock,
+    ///    - shouldAttemptAutomaticBiometricUnlock: If the route uses automatic biometrics unlock,
     ///      this value enables or disables the feature.
     ///    - shouldAttemptAccountSwitch: Should the application automatically switch accounts for the user?
     /// - Returns: A suggested route for the active account with state pre-configured.
@@ -357,14 +361,6 @@ extension AuthRouter {
                     return .landingSoftLoggedOut(email: activeAccount.profile.email)
                 }
 
-                let hasMasterPassword = activeAccount.profile.userDecryptionOptions?.hasMasterPassword == true
-
-                if !hasMasterPassword {
-                    let biometricUnlockStatus = try await services.biometricsRepository.getBiometricUnlockStatus()
-                    if case .available(_, true, false) = biometricUnlockStatus {
-                        return .enterpriseSingleSignOn(email: activeAccount.profile.email)
-                    }
-                }
                 return .vaultUnlock(
                     activeAccount,
                     animated: animated,

@@ -206,6 +206,14 @@ class AppCoordinatorTests: BitwardenTestCase { // swiftlint:disable:this type_bo
         XCTAssertEqual(module.authCoordinator.routes, [.landing, .landing])
     }
 
+    /// `navigate(to:)` with `.debugMenu` starts the auth coordinator and navigates to the proper debug menu route.
+    @MainActor
+    func test_navigateTo_debugMenu() throws {
+        subject.navigate(to: .debugMenu)
+
+        waitFor(module.debugMenuCoordinator.isStarted)
+    }
+
     /// `navigate(to:)` with `.extensionSetup(.extensionActivation))` starts the extension setup
     /// coordinator and navigates to the proper route.
     @MainActor
@@ -334,6 +342,20 @@ class AppCoordinatorTests: BitwardenTestCase { // swiftlint:disable:this type_bo
         subject.hideLoadingOverlay()
         waitFor { window.viewWithTag(LoadingOverlayDisplayHelper.overlayViewTag) == nil }
         XCTAssertNil(window.viewWithTag(LoadingOverlayDisplayHelper.overlayViewTag))
+    }
+
+    /// `showToast(_:subtitle)` shows the toast in the navigator.
+    @MainActor
+    func test_showToast() {
+        let viewController = UIViewController()
+        let window = UIWindow()
+        window.rootViewController = viewController
+        window.makeKeyAndVisible()
+        rootNavigator.rootViewController = viewController
+
+        subject.showToast("Title", subtitle: "Subtitle")
+
+        XCTAssertNotNil(window.viewWithTag(ToastDisplayHelper.toastTag))
     }
 
     /// `start()` doesn't navigate anywhere (first route is managed by AppProcessor).

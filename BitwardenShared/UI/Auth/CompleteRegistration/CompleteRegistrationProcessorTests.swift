@@ -19,6 +19,7 @@ class CompleteRegistrationProcessorTests: BitwardenTestCase {
     var environmentService: MockEnvironmentService!
     var errorReporter: MockErrorReporter!
     var subject: CompleteRegistrationProcessor!
+    var stateService: MockStateService!
 
     // MARK: Setup & Teardown
 
@@ -32,6 +33,7 @@ class CompleteRegistrationProcessorTests: BitwardenTestCase {
         coordinator = MockCoordinator<AuthRoute, AuthEvent>()
         environmentService = MockEnvironmentService()
         errorReporter = MockErrorReporter()
+        stateService = MockStateService()
         subject = CompleteRegistrationProcessor(
             coordinator: coordinator.asAnyCoordinator(),
             services: ServiceContainer.withMocks(
@@ -41,7 +43,8 @@ class CompleteRegistrationProcessorTests: BitwardenTestCase {
                 configService: configService,
                 environmentService: environmentService,
                 errorReporter: errorReporter,
-                httpClient: client
+                httpClient: client,
+                stateService: stateService
             ),
             state: CompleteRegistrationState(
                 emailVerificationToken: "emailVerificationToken",
@@ -60,6 +63,7 @@ class CompleteRegistrationProcessorTests: BitwardenTestCase {
         configService = nil
         errorReporter = nil
         subject = nil
+        stateService = nil
     }
 
     // MARK: Tests
@@ -67,18 +71,41 @@ class CompleteRegistrationProcessorTests: BitwardenTestCase {
     /// `perform(.appeared)` with EU region in state.
     @MainActor
     func test_perform_appeared_setRegion_europe() async {
-        subject.state.region = .europe
+        let email = "email@example.com"
+        subject.state.userEmail = email
+        subject.state.fromEmail = true
+        await stateService.setAccountCreationEnvironmentUrls(urls: .defaultEU, email: email)
         await subject.perform(.appeared)
-        XCTAssertEqual(subject.state.region, .europe)
         XCTAssertEqual(environmentService.setPreAuthEnvironmentUrlsData, .defaultEU)
     }
 
-    /// `perform(.appeared)` with nil region in state.
+    /// `perform(.appeared)` fromEmail false  returns.
     @MainActor
-    func test_perform_appeared_setRegion_return() async {
-        subject.state.region = nil
+    func test_perform_appeared_setRegion_notFromEmail_returns() async throws {
+        let email = "email@example.com"
+        subject.state.userEmail = email
+        subject.state.fromEmail = false
+        await stateService.setAccountCreationEnvironmentUrls(urls: .defaultEU, email: email)
         await subject.perform(.appeared)
-        XCTAssertEqual(subject.state.region, nil)
+        XCTAssertNil(coordinator.alertShown.last)
+        XCTAssertEqual(environmentService.setPreAuthEnvironmentUrlsData, nil)
+    }
+
+    /// `perform(.appeared)` fromEmail true and no saved region for given email shows alert.
+    @MainActor
+    func test_perform_appeared_setRegion_noRegion_alert() async throws {
+        let email = "email@example.com"
+        subject.state.userEmail = email
+        subject.state.fromEmail = true
+        await stateService.setAccountCreationEnvironmentUrls(urls: .defaultEU, email: "another_email@example.com")
+        await subject.perform(.appeared)
+        XCTAssertEqual(
+            coordinator.alertShown[0],
+            .defaultAlert(
+                title: Localizations.anErrorHasOccurred,
+                message: Localizations.theRegionForTheGivenEmailCouldNotBeLoaded
+            )
+        )
         XCTAssertEqual(environmentService.setPreAuthEnvironmentUrlsData, nil)
     }
 
@@ -88,7 +115,7 @@ class CompleteRegistrationProcessorTests: BitwardenTestCase {
         client.results = [.httpSuccess(testData: .emptyResponse)]
         subject.state.fromEmail = true
         await subject.perform(.appeared)
-        XCTAssertEqual(subject.state.toast?.text, Localizations.emailVerified)
+        XCTAssertEqual(subject.state.toast, Toast(title: Localizations.emailVerified))
     }
 
     /// `perform(.appeared)` verify user email show no toast.
@@ -144,7 +171,7 @@ class CompleteRegistrationProcessorTests: BitwardenTestCase {
 
         try await alert.tapAction(title: Localizations.tryAgain)
 
-        XCTAssertEqual(subject.state.toast?.text, Localizations.emailVerified)
+        XCTAssertEqual(subject.state.toast, Toast(title: Localizations.emailVerified))
         XCTAssertEqual(client.requests.count, 2)
         XCTAssertEqual(client.requests[0].url, URL(
             string: "https://example.com/identity/accounts/register/verification-email-clicked"
@@ -510,8 +537,8 @@ class CompleteRegistrationProcessorTests: BitwardenTestCase {
         }
         dismissAction?.action()
         XCTAssertEqual(coordinator.routes.count, 2)
-        XCTAssertEqual(coordinator.routes[1], .login(username: "email@example.com"))
-        XCTAssertEqual(coordinator.toastsShown, [Localizations.accountSuccessfullyCreated])
+        XCTAssertEqual(coordinator.routes[1], .login(username: "email@example.com", isNewAccount: true))
+        XCTAssertEqual(coordinator.toastsShown, [Toast(title: Localizations.accountSuccessfullyCreated)])
     }
 
     /// `perform(_:)` with `.completeRegistration` navigates to login if the create account and
@@ -541,8 +568,8 @@ class CompleteRegistrationProcessorTests: BitwardenTestCase {
         }
         dismissAction?.action()
         XCTAssertEqual(coordinator.routes.count, 2)
-        XCTAssertEqual(coordinator.routes[1], .login(username: "email@example.com"))
-        XCTAssertEqual(coordinator.toastsShown, [Localizations.accountSuccessfullyCreated])
+        XCTAssertEqual(coordinator.routes[1], .login(username: "email@example.com", isNewAccount: true))
+        XCTAssertEqual(coordinator.toastsShown, [Toast(title: Localizations.accountSuccessfullyCreated)])
     }
 
     /// `perform(_:)` with `.completeRegistration` presents an alert when there is no internet connection.
@@ -631,6 +658,7 @@ class CompleteRegistrationProcessorTests: BitwardenTestCase {
         XCTAssertEqual(authService.loginWithMasterPasswordPassword, "password1234")
         XCTAssertNil(authService.loginWithMasterPasswordCaptchaToken)
         XCTAssertEqual(authService.loginWithMasterPasswordUsername, "email@example.com")
+        XCTAssertTrue(authService.loginWithMasterPasswordIsNewAccount)
 
         XCTAssertEqual(client.requests.count, 2)
         XCTAssertEqual(client.requests[0].url, URL(string: "https://example.com/identity/accounts/register/finish"))
@@ -659,6 +687,7 @@ class CompleteRegistrationProcessorTests: BitwardenTestCase {
     func test_receive_learnMoreTapped() {
         subject.receive(.learnMoreTapped)
         XCTAssertEqual(coordinator.routes.last, .masterPasswordGuidance)
+        XCTAssertNotNil(coordinator.contexts.last as? CompleteRegistrationProcessor)
     }
 
     /// `receive(_:)` with `.passwordHintTextChanged(_:)` updates the state to reflect the change.
@@ -707,6 +736,13 @@ class CompleteRegistrationProcessorTests: BitwardenTestCase {
         XCTAssertEqual(authRepository.passwordStrengthPassword, "TestPassword1234567890!@#")
     }
 
+    /// `receive(_:)` with `.preventAccountLockTapped` navigates to the right route.
+    @MainActor
+    func test_receive_preventAccountLock() {
+        subject.receive(.preventAccountLockTapped)
+        XCTAssertEqual(coordinator.routes.last, .preventAccountLock)
+    }
+
     /// `receive(_:)` with `.retypePasswordTextChanged(_:)` updates the state to reflect the change.
     @MainActor
     func test_receive_retypePasswordTextChanged() {
@@ -748,8 +784,18 @@ class CompleteRegistrationProcessorTests: BitwardenTestCase {
     /// `receive(_:)` with `.showToast` show toast.
     @MainActor
     func test_receive_showToast() {
-        subject.receive(.toastShown(Toast(text: "example")))
-        XCTAssertEqual(subject.state.toast?.text, "example")
+        let toast = Toast(title: "example")
+        subject.receive(.toastShown(toast))
+        XCTAssertEqual(subject.state.toast, toast)
+    }
+
+    /// Tests `didUpdateMasterPassword` correctly updates the state and navigates correctly.
+    @MainActor
+    func test_didUpdateMasterPassword() {
+        let expectedPassword = "215-Go-Birds-🦅"
+        subject.didUpdateMasterPassword(password: expectedPassword)
+        XCTAssertEqual(subject.state.passwordText, expectedPassword)
+        XCTAssertEqual(subject.state.retypePasswordText, expectedPassword)
     }
     // swiftlint:disable:next file_length
 }
