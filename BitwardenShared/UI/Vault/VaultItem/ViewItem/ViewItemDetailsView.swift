@@ -86,7 +86,7 @@ struct ViewItemDetailsView: View { // swiftlint:disable:this type_body_length
                                 }
                             case .text:
                                 if let value = customField.value {
-                                    Text(value)
+                                    Text(value).textSelection(.enabled)
                                 }
                             case .linked:
                                 if let linkedIdType = customField.linkedIdType {
@@ -185,8 +185,12 @@ struct ViewItemDetailsView: View { // swiftlint:disable:this type_body_length
     /// The notes section.
     @ViewBuilder private var notesSection: some View {
         if !store.state.notes.isEmpty {
+            let notes = store.state.notes
             SectionView(Localizations.notes) {
-                BitwardenTextValueField(value: store.state.notes)
+                BitwardenTextValueField(value: notes,
+                                        useUIKitTextView: true,
+                                        copyButtonAccessibilityIdentifier: "CopyNotesButton",
+                                        copyButtonAction: { store.send(.copyPressed(value: notes, field: .notes)) })
             }
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("CipherNotesLabel")

@@ -12,6 +12,14 @@ protocol AuthenticatorSyncService {
     /// must be called for the service to do any syncing.
     ///
     func start() async
+
+    /// Gets a temporary TOTP item that was saved from the Authenticator app. If no code was found or any
+    /// errors occur, it simply returns `nil`
+    ///
+    /// - Returns: An `AuthenticatorBridgeItemDataView` representing the saved item or
+    ///     `nil` if a temporary item couldn't be found.
+    ///
+    func getTemporaryTotpItem() async -> AuthenticatorBridgeItemDataView?
 }
 
 // MARK: - DefaultAuthenticatorSyncService
@@ -53,6 +61,12 @@ actor DefaultAuthenticatorSyncService: NSObject, AuthenticatorSyncService {
 
     /// The service used by the application to manage account state.
     private let stateService: StateService
+
+    /// A Task to hold the subscription that waits for sync to be turned on/off.
+    private var syncSubscriber: Task<Void, Never>?
+
+    /// A Task to hold the subscription that waits for the vault to be locked/unlocked..
+    private var vaultSubscriber: Task<Void, Never>?
 
     /// The service used by the application to manage vault access.
     private let vaultTimeoutService: VaultTimeoutService
@@ -99,7 +113,24 @@ actor DefaultAuthenticatorSyncService: NSObject, AuthenticatorSyncService {
         super.init()
     }
 
+    deinit {
+        syncSubscriber?.cancel()
+        vaultSubscriber?.cancel()
+    }
+
     // MARK: Public Methods
+
+    public func getTemporaryTotpItem() async -> AuthenticatorBridgeItemDataView? {
+        guard await configService.getFeatureFlag(FeatureFlag.enableAuthenticatorSync) else {
+            return nil
+        }
+        do {
+            return try await authBridgeItemService.fetchTemporaryItem()
+        } catch {
+            errorReporter.log(error: error)
+            return nil
+        }
+    }
 
     public func start() async {
         guard !started else { return }
@@ -110,7 +141,7 @@ actor DefaultAuthenticatorSyncService: NSObject, AuthenticatorSyncService {
             return
         }
 
-        Task {
+        syncSubscriber = Task {
             for await (userId, _) in await self.stateService.syncToAuthenticatorPublisher().values {
                 guard let userId else { continue }
 
@@ -121,7 +152,7 @@ actor DefaultAuthenticatorSyncService: NSObject, AuthenticatorSyncService {
                 }
             }
         }
-        Task {
+        vaultSubscriber = Task {
             for await vaultStatus in await self.vaultTimeoutService.vaultLockStatusPublisher().values {
                 guard let vaultStatus else { continue }
 
@@ -185,7 +216,7 @@ actor DefaultAuthenticatorSyncService: NSObject, AuthenticatorSyncService {
 
         return decryptedCiphers.map { cipher in
             AuthenticatorBridgeItemDataView(
-                accountDomain: account.settings.environmentUrls?.webVaultHost,
+                accountDomain: account.settings.environmentUrls?.webVaultHost ?? Constants.defaultWebVaultHost,
                 accountEmail: account.profile.email,
                 favorite: false,
                 id: cipher.id ?? UUID().uuidString,

@@ -207,7 +207,7 @@ class AppCoordinator: Coordinator, HasRootNavigator {
             coordinator.navigate(to: route)
         } else {
             guard let rootNavigator else { return }
-            let tabNavigator = UITabBarController()
+            let tabNavigator = BitwardenTabBarController()
             let coordinator = module.makeTabCoordinator(
                 errorReporter: services.errorReporter,
                 rootNavigator: rootNavigator,
@@ -363,6 +363,15 @@ extension AppCoordinator: SendItemDelegate {
 // MARK: - SettingsCoordinatorDelegate
 
 extension AppCoordinator: SettingsCoordinatorDelegate {
+    func didCompleteLoginsImport() {
+        navigate(to: .tab(.vault(.list)))
+        showToast(
+            Localizations.loginsImported,
+            subtitle: Localizations.rememberToDeleteYourImportedPasswordFileFromYourComputer,
+            additionalBottomPadding: FloatingActionButton.bottomOffsetPadding
+        )
+    }
+
     func didDeleteAccount() {
         Task {
             await handleAuthEvent(.didDeleteAccount)

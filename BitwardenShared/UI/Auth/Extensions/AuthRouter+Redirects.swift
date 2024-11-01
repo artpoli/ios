@@ -28,16 +28,22 @@ extension AuthRouter {
         guard let account = try? await services.authRepository.getAccount() else {
             return .landing
         }
+
+        await setCarouselShownIfEnabled()
+
         if account.profile.forcePasswordResetReason != nil {
             return .updateMasterPassword
-        } else if await (try? services.stateService.getAccountSetupVaultUnlock()) == .incomplete {
-            return .vaultUnlockSetup(.createAccount)
-        } else if await (try? services.stateService.getAccountSetupAutofill()) == .incomplete {
-            return .autofillSetup
-        } else {
-            await setCarouselShownIfEnabled()
-            return .complete
         }
+
+        if !isInAppExtension {
+            if await (try? services.stateService.getAccountSetupVaultUnlock()) == .incomplete {
+                return .vaultUnlockSetup(.createAccount)
+            } else if await (try? services.stateService.getAccountSetupAutofill()) == .incomplete {
+                return .autofillSetup
+            }
+        }
+
+        return .complete
     }
 
     /// Handles the `.didDeleteAccount`route and redirects the user to the correct screen
@@ -300,17 +306,6 @@ extension AuthRouter {
     /// - Returns: A suggested route for the active account with state pre-configured.
     ///
     func switchAccountRedirect(isAutomatic: Bool, userId: String) async -> AuthRoute {
-        if let account = try? await services.authRepository.getAccount(),
-           userId == account.profile.userId {
-            return await handleAndRoute(
-                .accountBecameActive(
-                    account,
-                    animated: false,
-                    attemptAutomaticBiometricUnlock: true,
-                    didSwitchAccountAutomatically: false
-                )
-            )
-        }
         do {
             let activeAccount = try await services.authRepository.setActiveAccount(userId: userId)
             // Setup the unlock route for the active account.
