@@ -1,4 +1,5 @@
 import BitwardenSdk
+import CoreData
 import XCTest
 
 @testable import BitwardenShared
@@ -127,6 +128,46 @@ class StateServiceTests: BitwardenTestCase { // swiftlint:disable:this type_body
         let state = try XCTUnwrap(appSettingsStore.state)
         XCTAssertTrue(state.accounts.isEmpty)
         XCTAssertNil(state.activeUserId)
+    }
+
+    /// `didAccountSwitchInExtension` returns `false` if there's no active user.
+    func test_didAccountSwitchInExtension_noActiveUser() async throws {
+        let didSwitch = try await subject.didAccountSwitchInExtension()
+        XCTAssertFalse(didSwitch)
+    }
+
+    /// `didAccountSwitchInExtension` returns `true` if there's a cached active user but no active
+    /// user in the state.
+    func test_didAccountSwitchInExtension_noActiveUser_cachedActiveUserId() async throws {
+        appSettingsStore.cachedActiveUserId = "1"
+        appSettingsStore.activeIdSubject.send("1")
+
+        var publishedValues = [String?]()
+        let publisher = appSettingsStore.activeIdSubject
+            .sink(receiveValue: { publishedValues.append($0) })
+        defer { publisher.cancel() }
+
+        let didSwitch = try await subject.didAccountSwitchInExtension()
+        XCTAssertTrue(didSwitch)
+        XCTAssertEqual(publishedValues, ["1", nil])
+    }
+
+    /// `didAccountSwitchInExtension` returns whether the active account was switched in the
+    /// extension.
+    func test_didAccountSwitchInExtension() async throws {
+        await subject.addAccount(.fixture(profile: .fixture(userId: "1")))
+        appSettingsStore.cachedActiveUserId = nil
+
+        var didSwitch = try await subject.didAccountSwitchInExtension()
+        XCTAssertTrue(didSwitch)
+
+        appSettingsStore.cachedActiveUserId = "1"
+        didSwitch = try await subject.didAccountSwitchInExtension()
+        XCTAssertFalse(didSwitch)
+
+        await subject.addAccount(.fixture(profile: .fixture(userId: "2")))
+        didSwitch = try await subject.didAccountSwitchInExtension()
+        XCTAssertTrue(didSwitch)
     }
 
     /// `doesActiveAccountHavePremium()` with premium personally and no organizations returns true.
@@ -481,6 +522,24 @@ class StateServiceTests: BitwardenTestCase { // swiftlint:disable:this type_body
         XCTAssertFalse(value)
     }
 
+    /// `getAppRehydrationState(userId:)` returns the app rehydration state for the active account.
+    func test_getAppRehydrationState() async throws {
+        await subject.addAccount(.fixture())
+        appSettingsStore.appRehydrationState["1"] = AppRehydrationState(
+            target: .viewCipher(cipherId: "1"),
+            expirationTime: .now
+        )
+        let value = try await subject.getAppRehydrationState()
+        XCTAssertEqual(value?.target, .viewCipher(cipherId: "1"))
+    }
+
+    /// `getAppRehydrationState(userId:)` throws when there's no active account.
+    func test_getAppRehydrationState_throws() async throws {
+        await assertAsyncThrows(error: StateServiceError.noActiveAccount) {
+            _ = try await subject.getAppRehydrationState()
+        }
+    }
+
     /// `getClearClipboardValue()` returns the clear clipboard value for the active account.
     func test_getClearClipboardValue() async throws {
         await subject.addAccount(.fixture())
@@ -666,6 +725,25 @@ class StateServiceTests: BitwardenTestCase { // swiftlint:disable:this type_body
         appSettingsStore.loginRequest = loginRequest
         let value = await subject.getLoginRequest()
         XCTAssertEqual(value, loginRequest)
+    }
+
+    /// `getManuallyLockedAccount(userId:)` returns whether the account has been manually locked.
+    func test_getManuallyLockedAccount() async throws {
+        await subject.addAccount(.fixture(profile: .fixture(userId: "1")))
+
+        let noManuallyLockedAccount = try await subject.getManuallyLockedAccount(userId: "1")
+        XCTAssertFalse(noManuallyLockedAccount)
+
+        appSettingsStore.manuallyLockedAccounts["1"] = true
+        let manuallyLockedAccount = try await subject.getManuallyLockedAccount(userId: "1")
+        XCTAssertTrue(manuallyLockedAccount)
+    }
+
+    /// `getManuallyLockedAccount(userId:)` throws because no active account.
+    func test_getManuallyLockedAccount_throws() async throws {
+        await assertAsyncThrows(error: StateServiceError.noActiveAccount) {
+            _ = try await subject.getManuallyLockedAccount(userId: nil)
+        }
     }
 
     /// `getMasterPasswordHash()` returns the user's master password hash.
@@ -1188,6 +1266,12 @@ class StateServiceTests: BitwardenTestCase { // swiftlint:disable:this type_body
             _ = try SendData(context: context, userId: "1", send: .fixture())
         }
 
+        var mergeChangesCount = 0
+        let publisher = NotificationCenter.default
+            .publisher(for: NSManagedObjectContext.didMergeChangesObjectIDsNotification)
+            .sink { _ in mergeChangesCount += 1 }
+        defer { publisher.cancel() }
+
         try await subject.logoutAccount(userInitiated: true)
 
         XCTAssertEqual(appSettingsStore.biometricAuthenticationEnabled, [:])
@@ -1206,6 +1290,9 @@ class StateServiceTests: BitwardenTestCase { // swiftlint:disable:this type_body
         try XCTAssertEqual(context.count(for: PasswordHistoryData.fetchByUserIdRequest(userId: "1")), 0)
         try XCTAssertEqual(context.count(for: PolicyData.fetchByUserIdRequest(userId: "1")), 0)
         try XCTAssertEqual(context.count(for: SendData.fetchByUserIdRequest(userId: "1")), 0)
+
+        // All of the data should be deleted within a single merge.
+        XCTAssertEqual(mergeChangesCount, 1)
     }
 
     /// `logoutAccount(_:)` removes the account from the account list and sets the active account to
@@ -1406,6 +1493,27 @@ class StateServiceTests: BitwardenTestCase { // swiftlint:disable:this type_body
 
         try await subject.setAllowSyncOnRefresh(true)
         XCTAssertEqual(appSettingsStore.allowSyncOnRefreshes["1"], true)
+    }
+
+    /// `setAppRehydrationState(_:userId:)` sets the app rehydration state for the given account.
+    func test_setAppRehydrationState() async throws {
+        await subject.addAccount(.fixture())
+        try await subject.setAppRehydrationState(
+            AppRehydrationState(
+                target: .viewCipher(cipherId: "1"),
+                expirationTime: .now
+            ),
+            userId: "1"
+        )
+        let value = appSettingsStore.appRehydrationState["1"]
+        XCTAssertEqual(value?.target, .viewCipher(cipherId: "1"))
+    }
+
+    /// `setAppRehydrationState(_:userId:)` throws when there's no active account.
+    func test_setAppRehydrationState_throws() async throws {
+        await assertAsyncThrows(error: StateServiceError.noActiveAccount) {
+            _ = try await subject.setAppRehydrationState(nil)
+        }
     }
 
     /// `setBiometricAuthenticationEnabled(isEnabled:)` sets biometric unlock preference for the default user.
@@ -1624,6 +1732,27 @@ class StateServiceTests: BitwardenTestCase { // swiftlint:disable:this type_body
         let loginRequest = LoginRequestNotification(id: "1", userId: "10")
         await subject.setLoginRequest(loginRequest)
         XCTAssertEqual(appSettingsStore.loginRequest, loginRequest)
+    }
+
+    /// `setManuallyLockedAccount(_:userId:)` sets if the account has been manually locked for a user.
+    func test_setManuallyLockedAccount() async throws {
+        await subject.addAccount(.fixture(profile: .fixture(userId: "1")))
+
+        try await subject.setManuallyLockedAccount(true, userId: nil)
+        XCTAssertEqual(appSettingsStore.manuallyLockedAccounts, ["1": true])
+
+        try await subject.setManuallyLockedAccount(false, userId: "1")
+        XCTAssertEqual(appSettingsStore.manuallyLockedAccounts, ["1": false])
+
+        try await subject.setManuallyLockedAccount(true, userId: "1")
+        XCTAssertEqual(appSettingsStore.manuallyLockedAccounts, ["1": true])
+    }
+
+    /// `setManuallyLockedAccount(_:userId:)` throws when setting if the account has been manually locked for a user.
+    func test_setManuallyLockedAccount_throws() async throws {
+        await assertAsyncThrows(error: StateServiceError.noActiveAccount) {
+            try await subject.setManuallyLockedAccount(true, userId: nil)
+        }
     }
 
     /// `setMasterPasswordHash(_:)` sets the master password hash for a user.

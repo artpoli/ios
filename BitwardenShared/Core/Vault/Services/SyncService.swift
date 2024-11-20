@@ -57,11 +57,13 @@ protocol SyncService: AnyObject {
     func fetchUpsertSyncSend(data: SyncSendNotification) async throws
 
     /// Does a given account need a sync?
+    /// - Parameters:
+    ///   - userId: The user id of the account
+    ///   - onlyCheckLocalData: If `true` it will only check local data to establish whether sync is needed.
+    ///   Otherwise, it can also perform requests to server to have additional data to check.
     ///
-    /// - Parameter userId: The user id of the account.
     /// - Returns: A bool indicating if the user needs a sync or not.
-    ///
-    func needsSync(for userId: String) async throws -> Bool
+    func needsSync(for userId: String, onlyCheckLocalData: Bool) async throws -> Bool
 }
 
 // MARK: - SyncServiceDelegate
@@ -139,6 +141,9 @@ class DefaultSyncService: SyncService {
     /// The time provider for this service.
     private let timeProvider: TimeProvider
 
+    /// The service used by the application to manage vault access.
+    private let vaultTimeoutService: VaultTimeoutService
+
     // MARK: Initialization
 
     /// Initializes a `DefaultSyncService`.
@@ -157,6 +162,7 @@ class DefaultSyncService: SyncService {
     ///   - stateService: The service used by the application to manage account state.
     ///   - syncAPIService: The API service used to perform sync API requests.
     ///   - timeProvider: The time provider for this service.
+    ///   - vaultTimeoutService: The service used by the application to manage vault access.
     ///
     init(
         accountAPIService: AccountAPIService,
@@ -171,7 +177,8 @@ class DefaultSyncService: SyncService {
         settingsService: SettingsService,
         stateService: StateService,
         syncAPIService: SyncAPIService,
-        timeProvider: TimeProvider
+        timeProvider: TimeProvider,
+        vaultTimeoutService: VaultTimeoutService
     ) {
         self.accountAPIService = accountAPIService
         self.cipherService = cipherService
@@ -186,16 +193,11 @@ class DefaultSyncService: SyncService {
         self.stateService = stateService
         self.syncAPIService = syncAPIService
         self.timeProvider = timeProvider
+        self.vaultTimeoutService = vaultTimeoutService
     }
 
-    /// Determine if a full sync is necessary.
-    ///
-    /// - Parameters:
-    ///   - userId: The user ID of the account to sync.
-    /// - Returns: Whether a sync should be performed.
-    ///
-    func needsSync(for userId: String) async throws -> Bool {
-        try await needsSync(forceSync: false, userId: userId)
+    func needsSync(for userId: String, onlyCheckLocalData: Bool) async throws -> Bool {
+        try await needsSync(forceSync: false, onlyCheckLocalData: onlyCheckLocalData, userId: userId)
     }
 
     // MARK: Private
@@ -205,13 +207,22 @@ class DefaultSyncService: SyncService {
     /// - Parameters:
     ///   - forceSync: Whether syncing should be forced, bypassing the account revision and minimum
     ///     sync interval checks.
+    ///   - onlyCheckLocalData: If `true` it will only check local data to establish whether sync is needed.
+    ///     Otherwise, it can also perform requests to server to have additional data to check.
     ///   - userId: The user ID of the account to sync.
     /// - Returns: Whether a sync should be performed.
     ///
-    private func needsSync(forceSync: Bool, userId: String) async throws -> Bool {
-        guard let lastSyncTime = try await stateService.getLastSyncTime(userId: userId), !forceSync else { return true }
-        guard lastSyncTime.addingTimeInterval(Constants.minimumSyncInterval)
-            < timeProvider.presentTime else { return false }
+    private func needsSync(forceSync: Bool, onlyCheckLocalData: Bool = false, userId: String) async throws -> Bool {
+        guard !forceSync, let lastSyncTime = try await stateService.getLastSyncTime(userId: userId) else {
+            return true
+        }
+        guard lastSyncTime.addingTimeInterval(Constants.minimumSyncInterval) < timeProvider.presentTime else {
+            return false
+        }
+        guard !onlyCheckLocalData else {
+            return true
+        }
+
         do {
             guard let accountRevisionDate = try await accountAPIService.accountRevisionDate()
             else { return true }
@@ -250,9 +261,11 @@ extension DefaultSyncService {
         }
 
         if let organizations = response.profile?.organizations {
-            try await organizationService.initializeOrganizationCrypto(
-                organizations: organizations.compactMap(Organization.init)
-            )
+            if !vaultTimeoutService.isLocked(userId: userId) {
+                try await organizationService.initializeOrganizationCrypto(
+                    organizations: organizations.compactMap(Organization.init)
+                )
+            }
             try await organizationService.replaceOrganizations(organizations, userId: userId)
             try await checkTdeUserNeedsToSetPassword(account, organizations)
         }

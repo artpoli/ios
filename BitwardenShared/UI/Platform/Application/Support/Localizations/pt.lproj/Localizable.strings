@@ -130,7 +130,7 @@
 "VaultTimeoutAction" = "Ação de tempo limite do cofre";
 "VaultTimeoutLogOutConfirmation" = "Ao terminar sessão removerá todo o acesso ao seu cofre e requer autenticação online após o período de tempo limite. Tem a certeza de que pretende utilizar esta definição?";
 "LoggingIn" = "A iniciar sessão...";
-"LoginOrCreateNewAccount" = "Inicie sessão ou crie uma nova conta para aceder ao seu cofre seguro.";
+"LogInToBitwarden" = "Iniciar sessão no Bitwarden";
 "Manage" = "Gerir";
 "MasterPasswordConfirmationValMessage" = "A confirmação da palavra-passe não está correta.";
 "MasterPasswordDescription" = "A palavra-passe mestra é a palavra-passe que utiliza para aceder ao seu cofre. É muito importante que não se esqueça da sua palavra-passe mestra. Não há forma de recuperar a palavra-passe no caso de a esquecer.";
@@ -1025,7 +1025,7 @@
 "YoullDeleteThisFileAfterImportIsComplete" = "Eliminará este ficheiro após concluir a importação.";
 "NeedHelpCheckOutImportHelp" = "Precisa de ajuda? Consulte a **[ajuda com a importação](%1$@)**";
 "LogInToBitwarden" = "Iniciar sessão no Bitwarden";
-"OnYourComputerOpenANewBrowserTabAndGoTo" = "No seu computador, abra um novo separador do navegador e vá a %1$@**";
+"OnYourComputerOpenANewBrowserTabAndGoTo" = "No seu computador, abra um novo separador do navegador e **vá a %1$@**.";
 "LogInToTheBitwardenWebApp" = "**Iniciar sessão na aplicação Web do Bitwarden.**";
 "ImportLoginsToBitwarden" = "Importar credenciais para o Bitwarden";
 "InTheBitwardenNavigationFindTheToolsOptionAndSelectImportData" = "Na navegação do Bitwarden, **encontre a opção Ferramentas** e **selecione Importar dados.**";
@@ -1038,7 +1038,7 @@
 "DownloadTheBrowserExtension" = "Descarregue a extensão do navegador";
 "GoToBitwardenToIntegrateBitwardenIntoYourFavoriteBrowserForASeamlessExperience" = "Vá a bitwarden.com/download para integrar o Bitwarden no seu navegador favorito para uma experiência perfeita.";
 "UseTheWebApp" = "Utilize a aplicação Web";
-"LogInAtBitwardenToEasilyManageYourAccountAndUpdateSettings" = "Inicie sessão em bitwarden.com para gerir facilmente a sua conta e atualizar as definições";
+"LogInAtBitwardenToEasilyManageYourAccountAndUpdateSettings" = "Inicie sessão em bitwarden.com para gerir facilmente a sua conta e atualizar as definições.";
 "AutofillPasswords" = "Preenchimento automático de palavras-passe";
 "SetUpAutofillOnAllYourDevicesToLoginWithASingleTapAnywhere" = "Configure o preenchimento automático em todos os seus dispositivos para iniciar sessão com um simples toque em qualquer lugar.";
 "GotIt" = "Percebido";
@@ -1054,3 +1054,8 @@
 "RememberToDeleteYourImportedPasswordFileFromYourComputer" = "Lembre-se de eliminar o ficheiro da palavra-passe importada do seu computador.";
 "SomethingWentWrong" = "Alguma coisa correu mal";
 "UnableToMoveTheSelectedItemPleaseTryAgain" = "Não foi possível mover o item selecionado. Por favor, tente novamente.";
+"Done" = "Concluído";
+"CopyPublicKey" = "Copiar chave pública";
+"CopyPrivateKey" = "Copiar chave privada";
+"CopyFingerprint" = "Copiar impressão digital";
+"SSHKeys" = "Chaves SSH";

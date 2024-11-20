@@ -512,6 +512,97 @@ class VaultRepositoryTests: BitwardenTestCase { // swiftlint:disable:this type_b
         }
     }
 
+    /// `ciphersAutofillPublisher(availableFido2CredentialsPublisher:mode:rpID:uri:)`
+    /// returns a publisher for the list of a user's ciphers matching a URI in `.totp` mode.
+    func test_ciphersAutofillPublisher_mode_totp() async throws {
+        let ciphers: [Cipher] = [
+            .fixture(
+                id: "1",
+                login: .fixture(
+                    uris: [
+                        .fixture(
+                            uri: "https://bitwarden.com",
+                            match: .exact
+                        ),
+                    ]
+                ),
+                name: "Bitwarden"
+            ),
+            .fixture(
+                creationDate: Date(year: 2024, month: 1, day: 1),
+                id: "2",
+                login: .fixture(
+                    uris: [
+                        .fixture(
+                            uri: "https://example.com",
+                            match: .exact
+                        ),
+                    ],
+                    totp: "123"
+                ),
+                name: "Example",
+                revisionDate: Date(year: 2024, month: 1, day: 1)
+            ),
+        ]
+        cipherService.ciphersSubject.value = ciphers
+
+        var iterator = try await subject.ciphersAutofillPublisher(
+            availableFido2CredentialsPublisher: MockFido2UserInterfaceHelper()
+                .availableCredentialsForAuthenticationPublisher(),
+            mode: .totp,
+            rpID: nil,
+            uri: "https://example.com"
+        ).makeAsyncIterator()
+        let publishedSections = try await iterator.next()
+
+        try assertInlineSnapshot(of: dumpVaultListSections(XCTUnwrap(publishedSections)), as: .lines) {
+            """
+            Section: 
+              - TOTP: 2 Example 123 456 
+            """
+        }
+    }
+
+    /// `ciphersAutofillPublisher(availableFido2CredentialsPublisher:mode:rpID:uri:)`
+    /// doesn't return the item on `.totp` mode because of Totp generation throwing.
+    func test_ciphersAutofillPublisher_mode_totpThrowsOnGeneration() async throws {
+        let ciphers: [Cipher] = [
+            .fixture(
+                creationDate: Date(year: 2024, month: 1, day: 1),
+                id: "2",
+                login: .fixture(
+                    uris: [
+                        .fixture(
+                            uri: "https://example.com",
+                            match: .exact
+                        ),
+                    ],
+                    totp: "123"
+                ),
+                name: "Example",
+                revisionDate: Date(year: 2024, month: 1, day: 1)
+            ),
+        ]
+        cipherService.ciphersSubject.value = ciphers
+        clientService.mockVault.generateTOTPCodeResult = .failure(BitwardenTestError.example)
+
+        var iterator = try await subject.ciphersAutofillPublisher(
+            availableFido2CredentialsPublisher: MockFido2UserInterfaceHelper()
+                .availableCredentialsForAuthenticationPublisher(),
+            mode: .totp,
+            rpID: nil,
+            uri: "https://example.com"
+        ).makeAsyncIterator()
+        let publishedSections = try await iterator.next()
+        let sections = try XCTUnwrap(publishedSections)
+
+        XCTAssertTrue(sections.isEmpty)
+        XCTAssertEqual(
+            errorReporter.errors as? [TOTPServiceError],
+            [.unableToGenerateCode("Unable to create TOTP code for key 123 for cipher id 2")]
+        )
+    }
+
     /// `deleteCipher()` throws on id errors.
     func test_deleteCipher_idError_nil() async throws {
         cipherService.deleteCipherWithServerResult = .failure(CipherAPIServiceError.updateMissingId)
@@ -565,47 +656,48 @@ class VaultRepositoryTests: BitwardenTestCase { // swiftlint:disable:this type_b
         let downloadUrl = FileManager.default.temporaryDirectory.appendingPathComponent("sillyGoose.txt")
         try Data("🪿".utf8).write(to: downloadUrl)
         cipherService.downloadAttachmentResult = .success(downloadUrl)
-        let attachment = AttachmentView.fixture(fileName: "sillyGoose.txt")
-        let cipher = CipherView.fixture(attachments: [attachment])
 
+        let attachment = AttachmentView.fixture(fileName: "sillyGoose.txt")
+        let cipherView = CipherView.fixture(
+            attachments: [attachment],
+            id: "2"
+        )
+        let cipher = Cipher.fixture(
+            attachments: [Attachment(attachmentView: attachment)],
+            id: "2",
+            key: "new key"
+        )
+        cipherService.fetchCipherResult = .success(cipher)
         // Test.
-        let resultUrl = try await subject.downloadAttachment(attachment, cipher: cipher)
+        let resultUrl = try await subject.downloadAttachment(attachment, cipher: cipherView)
 
         // Confirm the results.
-        XCTAssertEqual(clientService.mockVault.clientCiphers.encryptedCiphers.last, cipher)
+
         XCTAssertEqual(cipherService.downloadAttachmentId, attachment.id)
+        XCTAssertEqual(cipherService.fetchCipherId, cipher.id)
         XCTAssertEqual(clientService.mockVault.clientAttachments.encryptedFilePaths.last, downloadUrl.path)
         XCTAssertEqual(resultUrl?.lastPathComponent, "sillyGoose.txt")
     }
 
     /// `downloadAttachment(_:cipher:)` throws an error for nil id's.
     func test_downloadAttachment_nilId() async throws {
-        await assertAsyncThrows {
+        await assertAsyncThrows(error: BitwardenError.dataError("Missing data")) {
+            stateService.activeAccount = .fixture()
             _ = try await subject.downloadAttachment(.fixture(id: nil), cipher: .fixture(id: nil))
         }
     }
 
-    /// `downloadAttachment(_:cipher:)` updates the cipher on the server if the SDK adds a cipher key.
-    func test_downloadAttachment_updatesMigratedCipher() async throws {
-        stateService.activeAccount = .fixture()
-        let downloadUrl = FileManager.default.temporaryDirectory.appendingPathComponent("sillyGoose.txt")
-        try Data("🪿".utf8).write(to: downloadUrl)
-        cipherService.downloadAttachmentResult = .success(downloadUrl)
-        let attachment = AttachmentView.fixture(fileName: "sillyGoose.txt")
-        let cipherView = CipherView.fixture(attachments: [attachment])
-        let cipher = Cipher.fixture(
-            attachments: [Attachment(attachmentView: attachment)],
-            key: "new key"
-        )
-        clientCiphers.encryptCipherResult = .success(cipher)
-
-        let resultUrl = try await subject.downloadAttachment(attachment, cipher: cipherView)
-
-        XCTAssertEqual(clientService.mockVault.clientCiphers.encryptedCiphers.last, cipherView)
-        XCTAssertEqual(cipherService.downloadAttachmentId, attachment.id)
-        XCTAssertEqual(clientService.mockVault.clientAttachments.encryptedFilePaths.last, downloadUrl.path)
-        XCTAssertEqual(cipherService.updateCipherWithServerCiphers, [cipher])
-        XCTAssertEqual(resultUrl?.lastPathComponent, "sillyGoose.txt")
+    /// `downloadAttachment(_:cipher:)` throws an error if the cipher can't be found in local data storage.
+    func test_downloadAttachment_cipherNotFound() async throws {
+        await assertAsyncThrows(error: BitwardenError.dataError("Unable to fetch cipher with ID 2")) {
+            stateService.activeAccount = .fixture()
+            let attachment = AttachmentView.fixture(fileName: "sillyGoose.txt")
+            let cipherView = CipherView.fixture(
+                attachments: [attachment],
+                id: "2"
+            )
+            _ = try await subject.downloadAttachment(attachment, cipher: cipherView)
+        }
     }
 
     /// `fetchCipher(withId:)` returns the cipher if it exists and `nil` otherwise.
@@ -758,6 +850,33 @@ class VaultRepositoryTests: BitwardenTestCase { // swiftlint:disable:this type_b
         stateService.disableAutoTotpCopyByUserId["1"] = true
         isDisabled = try await subject.getDisableAutoTotpCopy()
         XCTAssertTrue(isDisabled)
+    }
+
+    /// `needsSync()` Calls the sync service to check it.
+    func test_needsSync() async throws {
+        stateService.activeAccount = .fixture()
+        syncService.needsSyncResult = .success(true)
+        let needsSync = try await subject.needsSync()
+        XCTAssertTrue(needsSync)
+        XCTAssertTrue(syncService.needsSyncOnlyCheckLocalData)
+    }
+
+    /// `needsSync()` throws when no active account.
+    func test_needsSync_throwsNoActiveAccount() async throws {
+        stateService.activeAccount = nil
+        await assertAsyncThrows(error: StateServiceError.noActiveAccount) {
+            _ = try await subject.needsSync()
+        }
+    }
+
+    /// `needsSync()` throws when sync service throws.
+    func test_needsSync_throwsSyncService() async throws {
+        stateService.activeAccount = .fixture()
+        syncService.needsSyncResult = .failure(BitwardenTestError.example)
+        await assertAsyncThrows(error: BitwardenTestError.example) {
+            _ = try await subject.needsSync()
+        }
+        XCTAssertTrue(syncService.needsSyncOnlyCheckLocalData)
     }
 
     /// `isVaultEmpty()` throws an error if one occurs.
@@ -1308,6 +1427,86 @@ class VaultRepositoryTests: BitwardenTestCase { // swiftlint:disable:this type_b
             .makeAsyncIterator()
         let sections = try await iterator.next()
         XCTAssertEqual(sections, [VaultListSection(id: "", items: [VaultListItem(cipherView: cipherView)!], name: "")])
+    }
+
+    /// `searchCipherAutofillPublisher(availableFido2CredentialsPublisher:mode:filterType:rpID:searchText:)`
+    /// returns search matching cipher name in `.totp` mode.
+    func test_searchCipherAutofillPublisher_mode_totp() async throws {
+        stateService.activeAccount = .fixtureAccountLogin()
+        let ciphers = [
+            Cipher.fixture(id: "1", name: "dabcd", type: .login),
+            Cipher.fixture(id: "2", name: "qwe", type: .login),
+            Cipher.fixture(id: "3", name: "Café", type: .login),
+            Cipher.fixture(
+                id: "4",
+                login: .fixture(
+                    totp: "123"
+                ),
+                name: "Cafffffffe",
+                type: .login
+            ),
+        ]
+        cipherService.ciphersSubject.value = ciphers
+
+        var iterator = try await subject
+            .searchCipherAutofillPublisher(
+                availableFido2CredentialsPublisher: fido2UserInterfaceHelper
+                    .availableCredentialsForAuthenticationPublisher(),
+                mode: .totp,
+                filterType: .allVaults,
+                rpID: nil,
+                searchText: "caf"
+            )
+            .makeAsyncIterator()
+        let sectionsResult = try await iterator.next()
+        let sections = try XCTUnwrap(sectionsResult)
+
+        assertInlineSnapshot(of: dumpVaultListSections(sections), as: .lines) {
+            """
+            Section: 
+              - TOTP: 4 Cafffffffe 123 456 
+            """
+        }
+    }
+
+    /// `searchCipherAutofillPublisher(availableFido2CredentialsPublisher:mode:filterType:rpID:searchText:)`
+    /// returns empty items in `.totp` mode when totp generation throws.
+    func test_searchCipherAutofillPublisher_mode_totpGenerationThrows() async throws {
+        stateService.activeAccount = .fixtureAccountLogin()
+        let ciphers = [
+            Cipher.fixture(id: "1", name: "dabcd", type: .login),
+            Cipher.fixture(id: "2", name: "qwe", type: .login),
+            Cipher.fixture(id: "3", name: "Café", type: .login),
+            Cipher.fixture(
+                id: "4",
+                login: .fixture(
+                    totp: "123"
+                ),
+                name: "Cafffffffe",
+                type: .login
+            ),
+        ]
+        cipherService.ciphersSubject.value = ciphers
+        clientService.mockVault.generateTOTPCodeResult = .failure(BitwardenTestError.example)
+
+        var iterator = try await subject
+            .searchCipherAutofillPublisher(
+                availableFido2CredentialsPublisher: fido2UserInterfaceHelper
+                    .availableCredentialsForAuthenticationPublisher(),
+                mode: .totp,
+                filterType: .allVaults,
+                rpID: nil,
+                searchText: "caf"
+            )
+            .makeAsyncIterator()
+        let sectionsResult = try await iterator.next()
+        let sections = try XCTUnwrap(sectionsResult)
+
+        XCTAssertTrue(sections.isEmpty)
+        XCTAssertEqual(
+            errorReporter.errors as? [TOTPServiceError],
+            [.unableToGenerateCode("Unable to create TOTP code for key 123 for cipher id 4")]
+        )
     }
 
     /// `searchVaultListPublisher(searchText:, filterType:)` returns search matching cipher name.
@@ -1881,6 +2080,7 @@ class VaultRepositoryTests: BitwardenTestCase { // swiftlint:disable:this type_b
             id: "1"
         )
         cipherService.deleteAttachmentWithServerResult = .success(cipherAfterAttachmentDelete)
+        cipherService.fetchCipherResult = .success(cipherAfterAttachmentSave)
         clientService.mockVault.clientCiphers.moveToOrganizationResult = .success(
             CipherView(cipher: cipherAfterAttachmentDelete)
         )
@@ -1982,31 +2182,6 @@ class VaultRepositoryTests: BitwardenTestCase { // swiftlint:disable:this type_b
                 Organization.fixture(id: "ORG_2", name: "ORG_NAME"),
             ]
         )
-    }
-
-    /// `remove(userId:)` Removes an account id from the vault timeout service.
-    func test_removeAccountId_success_unlocked() async {
-        let account = Account.fixtureAccountLogin()
-        vaultTimeoutService.isClientLocked = [account.profile.userId: false]
-        await subject.remove(userId: account.profile.userId)
-        XCTAssertTrue(vaultTimeoutService.removedIds.contains(account.profile.userId))
-    }
-
-    /// `remove(userId:)` Removes an account id from the vault timeout service.
-    func test_removeAccountId_success_locked() async {
-        let account = Account.fixtureAccountLogin()
-        vaultTimeoutService.isClientLocked[account.profile.userId] = true
-        await subject.remove(userId: account.profile.userId)
-        XCTAssertTrue(vaultTimeoutService.removedIds.contains(account.profile.userId))
-    }
-
-    /// `remove(userId:)` Throws no error when no account is found.
-    func test_removeAccountId_failure() async {
-        let account = Account.fixtureAccountLogin()
-        vaultTimeoutService.isClientLocked[account.profile.userId] = false
-        await assertAsyncDoesNotThrow {
-            await subject.remove(userId: "123")
-        }
     }
 
     /// `repromptRequiredForCipher(id:)` returns `true` if reprompt is required for a cipher.
