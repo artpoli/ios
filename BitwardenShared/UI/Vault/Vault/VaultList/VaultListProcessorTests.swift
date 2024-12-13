@@ -421,12 +421,13 @@ class VaultListProcessorTests: BitwardenTestCase { // swiftlint:disable:this typ
         XCTAssertEqual(subject.state.url, url)
     }
 
-    /// `perform(_:)` with `.refreshed` requests a fetch sync update with the vault repository.
+    /// `perform(_:)` with `.refreshed` requests a fetch sync update, but does not force a sync.
     @MainActor
     func test_perform_refresh() async {
         await subject.perform(.refreshVault)
 
         XCTAssertTrue(vaultRepository.fetchSyncCalled)
+        XCTAssertEqual(vaultRepository.fetchSyncForceSync, false)
     }
 
     /// `perform(_:)` with `.refreshed` records an error if applicable.
@@ -529,6 +530,7 @@ class VaultListProcessorTests: BitwardenTestCase { // swiftlint:disable:this typ
         // Ensure that the profile switcher state is updated
         waitFor(subject.state.profileSwitcherState == authRepository.profileSwitcherState)
         XCTAssertTrue(subject.state.profileSwitcherState.isVisible)
+        XCTAssertTrue(authRepository.checkSessionTimeoutCalled)
     }
 
     /// `perform(.profileSwitcher(.rowAppeared))` should not update the state for add Account
