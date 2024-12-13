@@ -1059,3 +1059,5 @@
 "CopyPrivateKey" = "Копіювати закритий ключ";
 "CopyFingerprint" = "Копіювати відбиток";
 "SSHKeys" = "Ключі SSH";
+"ExportingFailed" = "Exporting failed";
+"YouMayNeedToEnableDevicePasscodeOrBiometrics" = "You may need to enable device passcode or biometrics.";
