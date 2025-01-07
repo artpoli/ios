@@ -4,20 +4,29 @@ import Foundation
 
 /// An enum to represent a feature flag sent by the server
 enum FeatureFlag: String, CaseIterable, Codable {
+    /// A feature flag to enable/disable the app review prompt.
+    case appReviewPrompt = "app-review-prompt"
+
     /// Flag to enable/disable Credential Exchange export flow.
     case cxpExportMobile = "cxp-export-mobile"
 
     /// Flag to enable/disable Credential Exchange import flow.
     case cxpImportMobile = "cxp-import-mobile"
 
+    /// Flag to enable/disable individual cipher encryption configured remotely.
+    case cipherKeyEncryption = "cipher-key-encryption"
+
     /// Flag to enable/disable email verification during registration
     /// This flag introduces a new flow for account creation
     case emailVerification = "email-verification"
 
+    /// Flag to enable/disable the debug app review prompt.
+    case enableDebugAppReviewPrompt = "enable-debug-app-review-prompt"
+
     /// Flag to enable/disable the ability to sync TOTP codes with the Authenticator app.
     case enableAuthenticatorSync = "enable-authenticator-sync-ios"
 
-    /// A flag that enables individual cipher encryption.
+    /// An SDK flag that enables individual cipher encryption.
     case enableCipherKeyEncryption
 
     /// A feature flag for the import logins flow for new accounts.
@@ -28,6 +37,15 @@ enum FeatureFlag: String, CaseIterable, Codable {
 
     /// A feature flag for the create account flow.
     case nativeCreateAccountFlow = "native-create-account-flow"
+
+    /// A feature flag for the notice indicating a user does not have two-factor authentication set up.
+    /// If true, the user can dismiss the notice temporarily.
+    case newDeviceVerificationTemporaryDismiss = "new-device-temporary-dismiss"
+
+    /// A feature flag for the notice indicating a user does not have two-factor authentication set up.
+    /// If true, the user can not dismiss the notice, and must set up two-factor authentication.
+    /// Overrides the temporary flag.
+    case newDeviceVerificationPermanentDismiss = "new-device-permanent-dismiss"
 
     case sshKeyVaultItem = "ssh-key-vault-item"
 
@@ -73,6 +91,7 @@ enum FeatureFlag: String, CaseIterable, Codable {
     /// but if `isRemotelyConfigured` is false for the flag, then the value here will be used.
     /// This is a helpful way to manage local feature flags.
     static let initialValues: [FeatureFlag: AnyCodable] = [
+        .cipherKeyEncryption: .bool(true),
         .testLocalInitialBoolFlag: .bool(true),
         .testLocalInitialIntFlag: .int(42),
         .testLocalInitialStringFlag: .string("Test String"),
@@ -87,15 +106,20 @@ enum FeatureFlag: String, CaseIterable, Codable {
     var isRemotelyConfigured: Bool {
         switch self {
         case .enableCipherKeyEncryption,
+             .enableDebugAppReviewPrompt,
              .importLoginsFlow,
              .nativeCarouselFlow,
              .nativeCreateAccountFlow,
+             .newDeviceVerificationPermanentDismiss,
+             .newDeviceVerificationTemporaryDismiss,
              .testLocalFeatureFlag,
              .testLocalInitialBoolFlag,
              .testLocalInitialIntFlag,
              .testLocalInitialStringFlag:
             false
-        case .cxpExportMobile,
+        case .appReviewPrompt,
+             .cipherKeyEncryption,
+             .cxpExportMobile,
              .cxpImportMobile,
              .emailVerification,
              .enableAuthenticatorSync,

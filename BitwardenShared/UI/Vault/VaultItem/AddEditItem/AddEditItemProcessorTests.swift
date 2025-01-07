@@ -478,6 +478,18 @@ class AddEditItemProcessorTests: BitwardenTestCase {
         XCTAssertEqual(coordinator.routes.last, .dismiss())
     }
 
+    /// `didCompleteGenerator` with a passphrase value updates the state with the new password value
+    /// and navigates to the `.dismiss()` route.
+    @MainActor
+    func test_didCompleteGenerator_withPassphrase() {
+        subject.state.loginState.username = "username123"
+        subject.state.loginState.password = "password123"
+        subject.didCompleteGenerator(for: .passphrase, with: "passphrase")
+        XCTAssertEqual(coordinator.routes.last, .dismiss())
+        XCTAssertEqual(subject.state.loginState.password, "passphrase")
+        XCTAssertEqual(subject.state.loginState.username, "username123")
+    }
+
     /// `didCompleteGenerator` with a password value updates the state with the new password value
     /// and navigates to the `.dismiss()` route.
     @MainActor
@@ -1388,6 +1400,16 @@ class AddEditItemProcessorTests: BitwardenTestCase {
     @MainActor
     func test_perform_setupTotpPressed_cameraAuthorizationRestricted() async {
         cameraService.cameraAuthorizationStatus = .restricted
+        await subject.perform(.setupTotpPressed)
+
+        XCTAssertEqual(coordinator.routes.last, .setupTotpManual)
+    }
+
+    /// `perform(_:)` with `.setupTotpPressed` when in the app extension navigates to the
+    /// `.setupTotpManual` route.
+    @MainActor
+    func test_perform_setupTotpPressed_extension() async {
+        appExtensionDelegate.isInAppExtension = true
         await subject.perform(.setupTotpPressed)
 
         XCTAssertEqual(coordinator.routes.last, .setupTotpManual)
