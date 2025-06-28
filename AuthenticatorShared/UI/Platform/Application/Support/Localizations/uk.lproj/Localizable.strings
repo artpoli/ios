@@ -144,7 +144,7 @@
 "UnableToSyncCodesFromTheBitwardenApp" = "Неможливо синхронізувати коди з програмою Bitwarden. Переконайтеся, що у вас найновіші версії обох програм. Ви все одно можете отримати доступ до наявних кодів у програмі Bitwarden.";
 "FifteenMinutes" = "15 хвилин";
 "OneHour" = "1 година";
-"OneMinute" = "1 хвилина";
+"OneMinute" = "1 minute";
 "FourHours" = "4 години";
 "Immediately" = "Негайно";
 "VaultTimeout" = "Час очікування сховища";
