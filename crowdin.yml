@@ -1,3 +1,7 @@
 files:
   - source: /AuthenticatorShared/UI/Platform/Application/Support/Localizations/en.lproj/Localizable.strings
     translation: /AuthenticatorShared/UI/Platform/Application/Support/Localizations/%two_letters_code%.lproj/%original_file_name%
+  - source: BitwardenShared/UI/Platform/Application/Support/Localizations/en.lproj/Localizable.strings
+    translation: BitwardenShared/UI/Platform/Application/Support/Localizations/uk.lproj/Localizable.strings
+  - source: BitwardenWatchApp/Localization/en.lproj/Localizable.strings
+    translation: BitwardenWatchApp/Localization/uk.lproj/Localizable.strings
