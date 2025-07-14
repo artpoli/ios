@@ -1,4 +1,5 @@
 import BitwardenKit
+import BitwardenKitMocks
 import XCTest
 
 @testable import BitwardenShared
@@ -6,6 +7,7 @@ import XCTest
 class PolicyServiceTests: BitwardenTestCase { // swiftlint:disable:this type_body_length
     // MARK: Properties
 
+    var configService: MockConfigService!
     var organizationService: MockOrganizationService!
     var policyDataStore: MockPolicyDataStore!
     var stateService: MockStateService!
@@ -61,11 +63,13 @@ class PolicyServiceTests: BitwardenTestCase { // swiftlint:disable:this type_bod
     override func setUp() {
         super.setUp()
 
+        configService = MockConfigService()
         organizationService = MockOrganizationService()
         policyDataStore = MockPolicyDataStore()
         stateService = MockStateService()
 
         subject = DefaultPolicyService(
+            configService: configService,
             organizationService: organizationService,
             policyDataStore: policyDataStore,
             stateService: stateService
@@ -75,6 +79,7 @@ class PolicyServiceTests: BitwardenTestCase { // swiftlint:disable:this type_bod
     override func tearDown() {
         super.tearDown()
 
+        configService = nil
         organizationService = nil
         policyDataStore = nil
         stateService = nil
@@ -573,5 +578,185 @@ class PolicyServiceTests: BitwardenTestCase { // swiftlint:disable:this type_bod
 
         policyApplies = await subject.policyAppliesToUser(.twoFactorAuthentication)
         XCTAssertTrue(policyApplies)
+    }
+
+    /// `getOrganizationIdsForRestricItemTypesPolicy()` returns the policies that apply to the user.
+    func test_getOrganizationIdsForRestricItemTypesPolicy() async {
+        let result: Policy = .fixture(type: .restrictItemTypes)
+        stateService.activeAccount = .fixture()
+        organizationService.fetchAllOrganizationsResult = .success([.fixture()])
+        policyDataStore.fetchPoliciesResult = .success([result])
+
+        let twoFactorPolicies: [String] = await subject.getOrganizationIdsForRestricItemTypesPolicy()
+        XCTAssertEqual(twoFactorPolicies, [result.organizationId])
+    }
+
+    /// `getOrganizationIdsForRestricItemTypesPolicy()` called concurrently doesn't crash.
+    func test_getOrganizationIdsForRestricItemTypesPolicy_calledConcurrently() async {
+        stateService.activeAccount = .fixture()
+        organizationService.fetchAllOrganizationsResult = .success([.fixture()])
+        policyDataStore.fetchPoliciesResult = .success([.fixture(type: .twoFactorAuthentication)])
+
+        // Calling `policyAppliesToUser(_:)` concurrently shouldn't throw an exception due to
+        // simultaneous access to shared state. Since it's a race condition, running it repeatedly
+        // should expose the failure if it's going to fail.
+        for _ in 0 ..< 5 {
+            async let concurrentTask1 = subject.getOrganizationIdsForRestricItemTypesPolicy()
+            async let concurrentTask2 = subject.getOrganizationIdsForRestricItemTypesPolicy()
+
+            _ = await (concurrentTask1, concurrentTask2)
+        }
+    }
+
+    /// `getOrganizationIdsForRestricItemTypesPolicy()` returns the policies that apply to the user when one
+    /// organization has the policy enabled but not another.
+    func test_getOrganizationIdsForRestricItemTypesPolicy_multipleOrganizations() async {
+        let result: Policy = .fixture(enabled: true, organizationId: "org-2", type: .restrictItemTypes)
+        stateService.activeAccount = .fixture()
+        organizationService.fetchAllOrganizationsResult = .success([.fixture(id: "org-1"), .fixture(id: "org-2")])
+        policyDataStore.fetchPoliciesResult = .success([
+            .fixture(enabled: false, organizationId: "org-1", type: .twoFactorAuthentication),
+            result,
+        ])
+
+        let policies = await subject.getOrganizationIdsForRestricItemTypesPolicy()
+        XCTAssertEqual(policies, [result.organizationId])
+    }
+
+    /// `getOrganizationIdsForRestricItemTypesPolicy()` returns the policies that apply to the user when there's no
+    /// organizations.
+    func test_getOrganizationIdsForRestricItemTypesPolicy_noOrganizations() async {
+        stateService.activeAccount = .fixture()
+        organizationService.fetchAllOrganizationsResult = .success([])
+        policyDataStore.fetchPoliciesResult = .success([.fixture(type: .twoFactorAuthentication)])
+
+        let policies = await subject.getOrganizationIdsForRestricItemTypesPolicy()
+        XCTAssertTrue(policies.isEmpty)
+    }
+
+    /// `getOrganizationIdsForRestricItemTypesPolicy_noOrganizations(_:)` returns the policies that apply to
+    /// the user when there's no policies.
+    func test_getOrganizationIdsForRestricItemTypesPolicy_noOrganizations_noPolicies() async {
+        stateService.activeAccount = .fixture()
+        organizationService.fetchAllOrganizationsResult = .success([.fixture()])
+        policyDataStore.fetchPoliciesResult = .success([])
+
+        let policies = await subject.getOrganizationIdsForRestricItemTypesPolicy()
+        XCTAssertTrue(policies.isEmpty)
+    }
+
+    /// `getOrganizationIdsForRestricItemTypesPolicy()` returns the policies that apply to the user when the
+    /// organization user is exempt from policies.
+    func test_getOrganizationIdsForRestricItemTypesPolicy_organizationExempt() async {
+        stateService.activeAccount = .fixture()
+        organizationService.fetchAllOrganizationsResult = .success([.fixture(type: .admin)])
+        policyDataStore.fetchPoliciesResult = .success([.fixture(type: .twoFactorAuthentication)])
+
+        let policies = await subject.getOrganizationIdsForRestricItemTypesPolicy()
+        XCTAssertTrue(policies.isEmpty)
+    }
+
+    /// `getOrganizationIdsForRestricItemTypesPolicy()` returns policy when the policy applies to the user when the
+    /// organization user is `admin`.
+    func test_getOrganizationIdsForRestricItemTypesPolicy_organizationNotExemptWhenPolicyIsRemoveUnlockWithPin() async {
+        let result: Policy = .fixture(type: .restrictItemTypes)
+        stateService.activeAccount = .fixture()
+        organizationService.fetchAllOrganizationsResult = .success([.fixture(type: .admin)])
+        policyDataStore.fetchPoliciesResult = .success([result])
+
+        let policies = await subject.getOrganizationIdsForRestricItemTypesPolicy()
+        XCTAssertTrue(policies.isEmpty)
+    }
+
+    /// `getOrganizationIdsForRestricItemTypesPolicy()` returns the policies that apply to the user when the
+    /// organization doesn't use policies.
+    func test_getOrganizationIdsForRestricItemTypesPolicy_organizationDoesNotUsePolicies() async {
+        stateService.activeAccount = .fixture()
+        organizationService.fetchAllOrganizationsResult = .success([.fixture(usePolicies: false)])
+        policyDataStore.fetchPoliciesResult = .success([.fixture(type: .restrictItemTypes)])
+
+        let policies = await subject.getOrganizationIdsForRestricItemTypesPolicy()
+        XCTAssertTrue(policies.isEmpty)
+    }
+
+    /// `getOrganizationIdsForRestricItemTypesPolicy()` returns the policies that apply to the user even
+    /// if the organization is disabled.
+    func test_getOrganizationIdsForRestricItemTypesPolicy_organizationNotEnabled() async {
+        let result: Policy = .fixture(type: .restrictItemTypes)
+        stateService.activeAccount = .fixture()
+        organizationService.fetchAllOrganizationsResult = .success([.fixture(enabled: false)])
+        policyDataStore.fetchPoliciesResult = .success([result])
+
+        let policies = await subject.getOrganizationIdsForRestricItemTypesPolicy()
+        XCTAssertEqual(policies, [result.organizationId])
+    }
+
+    /// `getOrganizationIdsForRestricItemTypesPolicy()` returns whether the policy applies to the user when the user is
+    /// only invited to the organization.
+    func test_getOrganizationIdsForRestricItemTypesPolicy_organizationInvited() async {
+        stateService.activeAccount = .fixture()
+        organizationService.fetchAllOrganizationsResult = .success([.fixture(status: .invited)])
+        policyDataStore.fetchPoliciesResult = .success([.fixture(type: .restrictItemTypes)])
+
+        let policies = await subject.getOrganizationIdsForRestricItemTypesPolicy()
+        XCTAssertTrue(policies.isEmpty)
+    }
+
+    /// `passesRestrictItemTypesPolicy(cipher:)` returns `true` when the `.removeCardPolicy` is enabled
+    /// and cipher passes restricted organization ids.
+    @MainActor
+    func test_passesRestrictItemTypesPolicy_cipherPassesRestrictedOrganizationIds() async {
+        configService.featureFlagsBool[.removeCardPolicy] = true
+        let result: Policy = .fixture(organizationId: "1", type: .restrictItemTypes)
+        stateService.activeAccount = .fixture()
+        organizationService.fetchAllOrganizationsResult = .success([.fixture(id: "1")])
+        policyDataStore.fetchPoliciesResult = .success([result])
+
+        let passes = await subject.passesRestrictItemTypesPolicy(cipher: .fixture(
+            organizationId: "2",
+            type: .card(.fixture())
+        ))
+        XCTAssertTrue(passes)
+    }
+
+    /// `passesRestrictItemTypesPolicy(cipher:)` returns `false` when the `.removeCardPolicy` is enabled
+    /// and cipher doesn't pass restricted organization ids.
+    @MainActor
+    func test_passesRestrictItemTypesPolicy_cipherOrganizationPartOfRestrictedOnes() async {
+        configService.featureFlagsBool[.removeCardPolicy] = true
+        let result: Policy = .fixture(organizationId: "2", type: .restrictItemTypes)
+        stateService.activeAccount = .fixture()
+        organizationService.fetchAllOrganizationsResult = .success([
+            .fixture(id: "1"),
+            .fixture(id: "2"),
+            .fixture(id: "3"),
+        ])
+        policyDataStore.fetchPoliciesResult = .success([result])
+
+        let passes = await subject.passesRestrictItemTypesPolicy(cipher: .fixture(
+            organizationId: "2",
+            type: .card(.fixture())
+        ))
+        XCTAssertFalse(passes)
+    }
+
+    /// `passesRestrictItemTypesPolicy(cipher:)` returns `true` when the `.removeCardPolicy` is not enabled.
+    @MainActor
+    func test_passesRestrictItemTypesPolicy_removeCardPolicyDisabled() async {
+        configService.featureFlagsBool[.removeCardPolicy] = false
+        let result: Policy = .fixture(organizationId: "2", type: .restrictItemTypes)
+        stateService.activeAccount = .fixture()
+        organizationService.fetchAllOrganizationsResult = .success([
+            .fixture(id: "1"),
+            .fixture(id: "2"),
+            .fixture(id: "3"),
+        ])
+        policyDataStore.fetchPoliciesResult = .success([result])
+
+        let passes = await subject.passesRestrictItemTypesPolicy(cipher: .fixture(
+            organizationId: "2",
+            type: .card(.fixture())
+        ))
+        XCTAssertTrue(passes)
     }
 } // swiftlint:disable:this file_length
